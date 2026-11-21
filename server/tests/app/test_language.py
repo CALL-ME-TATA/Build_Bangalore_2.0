@@ -168,3 +168,12 @@ async def test_hindi_hello_is_default(server, fake_gnani):
         msgs = await hello(ws)
         assert of(msgs, "result")[0]["lang"] == "hi"
         assert fake_gnani.tts_requests[0]["language"] == "hi-IN"
+
+
+def test_an_answer_to_a_question_keeps_the_session_language(pipeline, state):
+    state.lang = "en"
+    pipeline.mark_spoken(state, pipeline.greeting(state))
+    q = pipeline.run_turn(state, "mohan ko 200 udhaar")  # asks first (new customer)
+    assert q.status == "needs_clarification"
+    a = pipeline.run_turn(state, "haan")  # a Hindi word as the answer
+    assert state.lang == "en" and a.lang == "en", (a.lang, a.reply_text)

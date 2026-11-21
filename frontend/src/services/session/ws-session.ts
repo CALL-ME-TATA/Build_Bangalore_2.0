@@ -25,6 +25,7 @@ import { Player, softBeep } from './audio/player';
 import { PreRoll, pcmLevel } from './audio/dsp';
 import { micError, micUnavailable } from './micStatus';
 import type { MicStatus, SessionHost, SessionService } from './types';
+import { voiceLang } from './voice';
 import workletUrl from './audio/capture-worklet.ts?worker&url';
 
 const GREETING_FALLBACK_MS = 6000;
@@ -176,7 +177,7 @@ export function createWsSession(host: SessionHost): SessionService {
 
       client = new SessionClient({
         url: wsUrl(location),
-        lang, // reused by every reconnect
+        lang: voiceLang() ?? lang, // reused by every reconnect; Kannada / Marathi / Tamil when chosen
         accessCode: accessCode(),
         private: priv,
         onStatus: (status) => dispatch({ type: 'conn', status }),
@@ -280,7 +281,7 @@ export function createWsSession(host: SessionHost): SessionService {
 
     setLang(next) {
       lang = next;
-      if (client) client.lang = next;
+      if (client) client.lang = voiceLang() ?? next;
     },
 
     setVoiceSpeed(rate) {

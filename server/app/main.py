@@ -28,7 +28,9 @@ from .gnani.stt import SttClient
 from .gnani.tts import TtsClient
 from .gnani.tts import _memory_cache as tts_memory_cache
 from .ledger import Ledger, in_quiet_hours
+from .llm import client_from_settings as llm_client_from_settings
 from .llm import from_settings as from_llm_settings
+from .regional import Regional
 from .notify import from_settings as notifier_from_settings
 from .logsafe import NoDebug, StripQuery
 from .pipeline import ParseFn, Pipeline, default_parse, warm_default_parser
@@ -145,6 +147,8 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
         pipeline = Pipeline(ledger, cfg, parse=parse or llm_parse, number_to_words=number_to_words, now=now)
         shared["crypto"], shared["parse"] = crypto, parse or llm_parse
         shared["notifier"] = pipeline.notifier = notifier_from_settings(cfg)
+        llm_client = llm_client_from_settings(cfg) if parse is None else None
+        shared["regional"] = pipeline.regional = Regional(llm_client.chat) if llm_client else None
         if parse is None:
             warm_default_parser()  # the vocabulary loads lazily; load it before the first turn
         holder["ctx"] = AppContext(
@@ -186,7 +190,7 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
                 base = holder["ctx"]
                 led = Ledger(cfg.data_dir / "users" / tid / "khata.db", shared["crypto"])
                 pipe = Pipeline(led, cfg, parse=shared["parse"], number_to_words=number_to_words, now=now)
-                pipe.notifier, pipe.shop = shared["notifier"], tid
+                pipe.notifier, pipe.shop, pipe.regional = shared["notifier"], tid, shared["regional"]
                 t = tenants[tid] = AppContext(settings=cfg, ledger=led, pipeline=pipe, stt_factory=base.stt_factory,
                                               tts_factory=base.tts_factory)
             return t

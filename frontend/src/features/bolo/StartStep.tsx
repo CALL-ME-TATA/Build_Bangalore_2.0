@@ -6,6 +6,13 @@ import { Volume2 } from 'lucide-react';
 import { labels, type Lang } from '../../i18n';
 import { startSession, useSession } from '../../state/session';
 import { useSettings } from '../../state/settings';
+import { setVoiceLang, type VoiceLang } from '../../services/session/voice';
+
+const REGIONAL: { voice: VoiceLang; native: string; name: string }[] = [
+  { voice: 'kn', native: 'ಕನ್ನಡ', name: 'Kannada' },
+  { voice: 'mr', native: 'मराठी', name: 'Marathi' },
+  { voice: 'ta', native: 'தமிழ்', name: 'Tamil' },
+];
 import { announce } from '../../components/LiveRegion';
 
 export function StartStep() {
@@ -13,7 +20,8 @@ export function StartStep() {
   const starting = useSession((s) => s.starting);
   const L = labels(preferred);
 
-  const start = async (lang: Lang) => {
+  const start = async (lang: Lang, voice: VoiceLang | null = null) => {
+    setVoiceLang(voice);
     try {
       await startSession(lang);
     } catch {
@@ -59,6 +67,21 @@ export function StartStep() {
             >
               <span>{starting && i === 0 ? L.startBusy : c.title}</span>
               <span className="text-meta font-normal opacity-90">{c.sub}</span>
+            </button>
+          ))}
+        </div>
+        <div role="group" aria-label="Other languages" className="grid grid-cols-3 gap-2">
+          {REGIONAL.map((r) => (
+            <button
+              key={r.voice}
+              type="button"
+              disabled={starting}
+              lang={r.voice}
+              onClick={() => void start('en', r.voice)}
+              className="flex min-h-12 flex-col items-center justify-center rounded-control border border-line-strong bg-surface px-2 py-1 text-label-sm text-ink disabled:opacity-60"
+            >
+              <span>{r.native}</span>
+              <span className="text-meta text-ink-2">{r.name}</span>
             </button>
           ))}
         </div>

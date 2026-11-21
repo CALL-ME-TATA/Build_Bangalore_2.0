@@ -32,6 +32,10 @@ class TtsError(Exception):
 
 def tts_language(settings: Settings, lang: str) -> str:
     """Gnani language code for a reply language: en-IN for English, the configured code otherwise."""
+    from ..regional import REGIONAL
+
+    if lang in REGIONAL:
+        return REGIONAL[lang][0]
     return "en-IN" if lang == "en" else settings.tts_language
 
 

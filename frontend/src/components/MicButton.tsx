@@ -39,8 +39,9 @@ function isTypingTarget(t: EventTarget | null): boolean {
   if (!(t instanceof HTMLElement)) return false;
   if (t.isContentEditable) return true;
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return true;
-  // Space activates other buttons, links and switches; leave those alone.
-  if (t.closest('button, a, [role="switch"], [role="button"], [role="dialog"]') && !t.closest('[data-mic]')) return true;
+  // Space activates other buttons, links and switches; leave those alone. Inside the question sheet (a dialog)
+  // Space still talks, so a question can be answered by holding Space ("Bol kar jawab dijiye").
+  if (t.closest('button, a, [role="switch"], [role="button"]') && !t.closest('[data-mic]')) return true;
   return false;
 }
 

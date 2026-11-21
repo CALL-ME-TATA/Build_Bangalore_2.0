@@ -15,6 +15,7 @@ import time
 import uuid
 from contextlib import aclosing
 from dataclasses import dataclass, field
+from dataclasses import replace as dc_replace
 from typing import Any, Callable
 
 from fastapi import WebSocket
@@ -27,6 +28,7 @@ from .gnani.tts import TtsClient, TtsError
 from .ledger import Ledger
 from .logsafe import describe
 from .pipeline import Pipeline, SessionState, TurnResult, clean_device_ts, clean_utt_id
+from .regional import REGIONAL, is_regional
 
 log = logging.getLogger("khata.session")
 
@@ -186,8 +188,11 @@ class Session:
 
     def _ensure_stt(self) -> SttClient:
         if self.stt is None:
+            settings = self.app.settings
+            if is_regional(self._lang()):  # Gnani STT in kn-IN / mr-IN / ta-IN
+                settings = dc_replace(settings, stt_language=REGIONAL[self._lang()][0], stt_format="transcribe")
             self.stt = self.app.stt_factory(
-                self.app.settings, lambda: [c["name"] for c in self.app.ledger.customers_for_parser()])
+                settings, lambda: [c["name"] for c in self.app.ledger.customers_for_parser()])
         return self.stt
 
     def _ensure_state(self, session_id: str | None = None) -> SessionState:
@@ -275,7 +280,7 @@ class Session:
     @staticmethod
     def _hello_lang(data: dict) -> str | None:
         lang = str(data.get("lang") or "").lower()[:2]
-        return lang if lang in ("hi", "en") else None
+        return lang if lang in ("hi", "en", "kn", "mr", "ta") else None
 
     async def _hello(self, data: dict) -> bool:
         code = self.app.settings.access_code

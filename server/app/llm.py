@@ -205,24 +205,32 @@ class OpenAICompatRewrite:
         self.client = httpx.Client(base_url=base_url.rstrip("/"), timeout=timeout_s,
                                    headers={"Authorization": f"Bearer {api_key}"})
 
-    def __call__(self, sentence: str, names: list[str]) -> str | None:
-        user = f"Customers in the khata: {', '.join(names[:200]) or 'none'}\nSentence: {sentence}"
-        body: dict[str, Any] = {"model": self.model, "temperature": 0, "max_tokens": 60,
-                                "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}]}
+    def chat(self, system: str, user: str, max_tokens: int = 60) -> str:
+        body: dict[str, Any] = {"model": self.model, "temperature": 0, "max_tokens": max_tokens,
+                                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
         if self.reasoning_effort:
             body["reasoning_effort"] = self.reasoning_effort  # no thinking step: a rewrite needs none
         r = self.client.post("/chat/completions", json=body)
         r.raise_for_status()
-        text = r.json()["choices"][0]["message"]["content"] or ""
+        return r.json()["choices"][0]["message"]["content"] or ""
+
+    def __call__(self, sentence: str, names: list[str]) -> str | None:
+        user = f"Customers in the khata: {', '.join(names[:200]) or 'none'}\nSentence: {sentence}"
+        text = self.chat(SYSTEM, user)
         return text.strip().splitlines()[0].strip().strip('"') if text.strip() else None
 
     def close(self) -> None:
         self.client.close()
 
 
-def from_settings(base: Callable[..., dict], cfg: Any) -> LlmParse | None:
-    """The wrapped parser when LLM_API_KEY is set, else None (rules only)."""
+def client_from_settings(cfg: Any) -> OpenAICompatRewrite | None:
     if not getattr(cfg, "llm_api_key", ""):
         return None
-    return LlmParse(base, OpenAICompatRewrite(cfg.llm_api_key, cfg.llm_base_url, cfg.llm_model, cfg.llm_timeout_s,
-                                              cfg.llm_reasoning_effort))
+    return OpenAICompatRewrite(cfg.llm_api_key, cfg.llm_base_url, cfg.llm_model, cfg.llm_timeout_s,
+                               cfg.llm_reasoning_effort)
+
+
+def from_settings(base: Callable[..., dict], cfg: Any) -> LlmParse | None:
+    """The wrapped parser when LLM_API_KEY is set, else None (rules only)."""
+    client = client_from_settings(cfg)
+    return LlmParse(base, client) if client else None

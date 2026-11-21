@@ -22,6 +22,7 @@ from .logsafe import describe
 from .ledger import PERIODS, DuplicateUtterance, Ledger, Outcome, in_quiet_hours, period_range
 from .names import display_name
 from .notify import Notifier
+from .regional import Regional, is_regional
 from .replies import NumberToWords, Reply, Replier, default_number_to_words, fixed_replies
 
 log = logging.getLogger("khata.pipeline")
@@ -117,7 +118,7 @@ class TurnResult:
         """The `result` message of CONTRACT sections 3 and 3.3."""
         msg: dict[str, Any] = {"type": "result", "turn_id": turn_id, "trace_id": self.trace_id, "status": self.status,
                                "action": self.action, "entries": self.entries, "reply_text": self.reply_text,
-                               "lang": self.lang}
+                               "lang": self.lang if self.lang in ("hi", "en") else "en"}  # page labels: hi or en
         for key in ("reason", "question", "query", "balances", "candidates", "confirm"):
             value = getattr(self, key)
             if value is not None:
@@ -208,6 +209,7 @@ class Pipeline:
         self._fixed = {lang: {r.speak for r in fixed_replies(self.replies.with_lang(lang))} for lang in ("hi", "en")}
         self._noisy = False  # the turn in progress was a noisy spoken turn (3.5); reset by every `_run`
         self.notifier: Notifier = Notifier()  # Kafka notifications (app/notify.py); set by the app
+        self.regional: Regional | None = None  # Kannada / Marathi / Tamil through the LLM (app/regional.py)
         self.shop = "default"  # which khata this pipeline writes (a hash per signed-in account)
 
     def notify(self, event: dict) -> None:
@@ -238,7 +240,8 @@ class Pipeline:
             state.disclosed = True
 
     def _use_lang(self, state: SessionState) -> None:
-        self._r = self.replies.with_lang(state.lang)
+        # Regional sessions use the English templates; run_turn translates the reply (app/regional.py).
+        self._r = self.replies.with_lang("en" if is_regional(state.lang) else state.lang)
 
     def _fixed_reply(self, state: SessionState, reply: Reply, action: str, reason: str) -> TurnResult:
         """A spoken rejection outside the parser (silence, too long, empty transcript, upstream failure).
@@ -350,6 +353,8 @@ class Pipeline:
                 prior = self.ledger.find_utterance(client_id)
                 if prior is not None:
                     return self._repeat(state, prior, fingerprint, trace_id, utterance_id)
+            if is_regional(state.lang) and self.regional is not None:
+                return self._run_regional(state, transcript, trace_id, utterance_id, device_ts)
             return self._run(state, transcript, trace_id, utterance_id, device_ts, noisy)
         except DuplicateUtterance as dup:
             return self._repeat(state, dup.record, fingerprint, trace_id, utterance_id)
@@ -362,6 +367,22 @@ class Pipeline:
             turn.trace_id, turn.utterance_id = trace_id, uuid.uuid4().hex[:12]
             self._record(state, turn, transcript, self._r.rejected(), device_ts)
             return turn
+
+    def _run_regional(self, state: SessionState, transcript: str, trace_id: str, utterance_id: str,
+                      device_ts: str | None) -> TurnResult:
+        """A Kannada / Marathi / Tamil turn: translated to Hinglish, parsed as usual with every new entry read back
+        (the `noisy` path), and answered in the session's language."""
+        lang = state.lang
+        hinglish = self.regional.to_hinglish(transcript, lang) if self.regional else None
+        turn = self._run(state, hinglish or transcript, trace_id, utterance_id, device_ts, noisy=True)
+        state.lang = lang  # the Hinglish text must not switch the session to Hindi
+        if not turn.error_code and self.regional is not None:
+            said = self.regional.reply(turn.reply_text, lang)
+            if said:
+                turn.reply_text = turn.speak_text = said
+                turn.cacheable = False
+        turn.lang = lang
+        return turn
 
     def _repeat(self, state: SessionState, prior: dict, fingerprint: str, trace_id: str,
                 utterance_id: str) -> TurnResult:
@@ -458,7 +479,9 @@ class Pipeline:
                 and result.get("action") == "reminder" and not (result.get("customer") or result.get("customer_id"))):
             # "Yes" to a reminder question names no customer: it is the one the question was about.
             result = dict(result, customer=asked.get("customer"), customer_id=asked.get("customer_id"))
-        if result.get("lang") in ("hi", "en"):
+        if result.get("lang") in ("hi", "en") and not asked and not is_regional(state.lang):
+            # A new sentence sets the session language. An answer to an open question keeps it: "udhaar", "jama",
+            # "haan" are said in English sessions too, and a one-word answer must not flip the language.
             state.lang = result["lang"]  # a result without `lang` keeps the session language
         self._use_lang(state)
         result = self._guard(result)

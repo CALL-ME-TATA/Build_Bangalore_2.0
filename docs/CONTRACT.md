@@ -939,7 +939,8 @@ Rules
 
 ### 3.2 Reply language (from the first voice test)
 - The session has a language, `hi` or `en`. `hello.lang` sets it (the start screen has one button per language) and
-  chooses the language of the greeting. Every parser result with `lang` switches it; a result without `lang` keeps it.
+  chooses the language of the greeting. Every parser result with `lang` switches it; a result without `lang` keeps it,
+  and so does an answer to an open question ("udhaar" in an English session stays English).
 - Every reply exists in both languages. English replies are spoken with TTS `language: "en-IN"` and amounts from
   `number_to_words(n, "en")` followed by `rupees`; Hinglish replies stay as in section 5.
 - `result` carries `lang` so the page can switch its labels.
