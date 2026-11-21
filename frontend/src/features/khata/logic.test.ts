@@ -74,11 +74,11 @@ describe('lastActivity', () => {
 });
 
 describe('lastEntryText', () => {
-  test('aaj / kal / N din pehle from the recorded time', () => {
-    expect(lastEntryText({ ts: at(21, 9) }, NOW, 'hi')).toBe('Aakhri entry aaj');
-    expect(lastEntryText({ ts: at(20, 23, 59) }, NOW, 'hi')).toBe('Aakhri entry kal');
-    expect(lastEntryText({ ts: at(16, 10) }, NOW, 'hi')).toBe('Aakhri entry 5 din pehle');
-    expect(lastEntryText({ ts: at(19, 10) }, NOW, 'en')).toBe('Last entry 2 days ago');
+  test('date and time the last entry was written', () => {
+    expect(lastEntryText({ ts: at(21, 9) }, NOW, 'hi')).toBe('Aakhri entry: Aaj, 21 Nov · 09:00');
+    expect(lastEntryText({ ts: at(20, 23, 59) }, NOW, 'hi')).toBe('Aakhri entry: Kal, 20 Nov · 23:59');
+    expect(lastEntryText({ ts: at(16, 10) }, NOW, 'hi')).toBe('Aakhri entry: 16 Nov · 10:00');
+    expect(lastEntryText({ ts: at(19, 10) }, NOW, 'en')).toBe('Last entry: Day before, 19 Nov · 10:00');
     expect(lastEntryText(undefined, NOW, 'hi')).toBeNull();
     expect(lastEntryText({ ts: 'bad' }, NOW, 'hi')).toBeNull();
   });

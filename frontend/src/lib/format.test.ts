@@ -15,6 +15,7 @@ import {
   longDate,
   replySegments,
   sinceLabel,
+  stamp,
   splitVolatile,
 } from './format';
 import { Amount } from '../components/Amount';
@@ -82,14 +83,23 @@ describe('dates and names', () => {
     expect(dayLabel('', '2026-11-21')).toBe('');
   });
 
-  test('entryWhen: "Aaj, 11:42", "Kal, 20 Nov", older dates alone', () => {
+  test('entryWhen: every entry shows its date and the time it was written', () => {
     const now = new Date(2026, 10, 21, 12, 0);
-    const recorded = new Date(2026, 10, 21, 11, 42).toISOString();
-    expect(entryWhen({ date: '2026-11-21', ts: recorded }, now)).toBe('Aaj, 11:42');
-    expect(entryWhen({ date: '2026-11-20', ts: recorded }, now)).toBe('Kal, 20 Nov');
-    expect(entryWhen({ date: '2026-11-19', ts: recorded }, now, 'en')).toBe('Day before, 19 Nov');
-    expect(entryWhen({ date: '2026-11-21', ts: 'bad' }, now, 'en')).toBe('Today');
-    expect(entryWhen({ date: '2026-11-10', ts: recorded }, now)).toBe('10 Nov');
+    const at = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).toISOString();
+    expect(entryWhen({ date: '2026-11-21', ts: at(21, 11, 42) }, now)).toBe('Aaj, 21 Nov · 11:42');
+    expect(entryWhen({ date: '2026-11-20', ts: at(20, 18, 5) }, now)).toBe('Kal, 20 Nov · 18:05');
+    expect(entryWhen({ date: '2026-11-19', ts: at(19, 9, 3) }, now, 'en')).toBe('Day before, 19 Nov · 09:03');
+    expect(entryWhen({ date: '2026-11-10', ts: at(10, 9, 12) }, now)).toBe('10 Nov · 09:12');
+    // said today about yesterday ("kal 200 diya tha"): that day, and when it was written
+    expect(entryWhen({ date: '2026-11-20', ts: at(21, 11, 42) }, now)).toBe('Kal, 20 Nov · likha Aaj 11:42');
+    expect(entryWhen({ date: '2026-11-21', ts: 'bad' }, now, 'en')).toBe('Today, 21 Nov');
+  });
+
+  test('stamp: date and time of any moment', () => {
+    const now = new Date(2026, 10, 21, 12, 0);
+    expect(stamp(new Date(2026, 10, 21, 11, 59, 40).toISOString(), now)).toBe('Aaj, 21 Nov · 11:59');
+    expect(stamp(new Date(2026, 10, 2, 7, 5).toISOString(), now, 'en')).toBe('2 Nov · 07:05');
+    expect(stamp('bad', now)).toBe('');
   });
 
   test('sinceLabel and longDate', () => {

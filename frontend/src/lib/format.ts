@@ -92,24 +92,37 @@ export function clockTime(ts: string): string {
   return clock.format(new Date(ms));
 }
 
+/** A calendar day with its date always shown: "Aaj, 21 Nov", "Kal, 20 Nov", "Parso, 19 Nov", else "18 Nov". */
+function dayWithDate(date: string, today: string, lang: Lang): string {
+  const [y, m, d] = date.slice(0, 10).split('-').map(Number);
+  const plain = shortDate.format(new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1));
+  const diff = dayNumber(today) - dayNumber(date.slice(0, 10));
+  return diff >= 0 && diff <= 2 ? `${dayLabel(date, today, lang)}, ${plain}` : plain;
+}
+
 /**
- * When an entry happened, for its row. Today: "Aaj, 11:42" (time recorded). Yesterday and the day before:
- * "Kal, 20 Nov" / "Parso, 19 Nov". Older: "18 Nov".
+ * When an entry was written, always with its date and time: "Aaj, 21 Nov · 11:42", "Kal, 20 Nov · 18:05",
+ * "18 Nov · 09:12". `ts` is the moment the server saved it, in the shop's local time.
+ */
+export function stamp(ts: string, now: Date = new Date(), lang: Lang = 'hi'): string {
+  const ms = Date.parse(ts);
+  if (Number.isNaN(ms)) return '';
+  return `${dayWithDate(ymd(new Date(ms)), ymd(now), lang)} · ${clockTime(ts)}`;
+}
+
+/**
+ * When an entry happened, for its row: its date and the time it was written ("Aaj, 21 Nov · 11:42"). An entry
+ * said about another day ("kal 200 diya tha") shows that day and when it was written:
+ * "Kal, 20 Nov · likha Aaj 11:42".
  */
 export function entryWhen(entry: { date: string; ts: string }, now: Date = new Date(), lang: Lang = 'hi'): string {
   const today = ymd(now);
   if (!entry.date || !/^\d{4}-\d{2}-\d{2}/.test(entry.date)) return '';
-  const diff = dayNumber(today) - dayNumber(entry.date.slice(0, 10));
-  const day = dayLabel(entry.date, today, lang);
-  if (diff === 0) {
-    const time = clockTime(entry.ts);
-    return time ? `${day}, ${time}` : day;
-  }
-  if (diff === 1 || diff === 2) {
-    const [y, m, d] = entry.date.slice(0, 10).split('-').map(Number);
-    return `${day}, ${shortDate.format(new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1))}`;
-  }
-  return day;
+  const ms = Date.parse(entry.ts);
+  if (Number.isNaN(ms)) return dayWithDate(entry.date, today, lang);
+  const writtenDay = ymd(new Date(ms));
+  if (writtenDay === entry.date.slice(0, 10)) return stamp(entry.ts, now, lang);
+  return `${dayWithDate(entry.date, today, lang)} · ${labels(lang).writtenOn} ${dayLabel(writtenDay, today, lang)} ${clockTime(entry.ts)}`;
 }
 
 /** Side-panel time: "abhi" under a minute, "5 min" under an hour, else the clock time. */

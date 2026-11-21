@@ -17,7 +17,7 @@ import { labels, type Lang } from '../../i18n';
 import { Sheet } from '../../components/Sheet';
 import { Amount } from '../../components/Amount';
 import { MicTextButton } from '../../components/MicButton';
-import { customerName, dayLabel, groupDigits, kindLabel, ymd } from '../../lib/format';
+import { customerName, dayLabel, entryWhen, groupDigits, kindLabel, ymd } from '../../lib/format';
 import { numberWords } from '../../lib/numberWords';
 import { doubtHeadingKey, type DoubtOption } from '../../lib/doubt';
 import { QUESTION_TTL_MS, type SheetState } from '../../lib/doubtSheet';
@@ -280,7 +280,7 @@ function Saved({ s, changeRef }: { s: SheetState; changeRef: RefObject<HTMLButto
             <Amount value={e.amount} kind={e.kind} size="inherit" tone lang={s.lang} />
           </h2>
           <p className="text-label font-normal text-ink-2">
-            {kindLabel(e.kind, s.lang)} · {customerName(e.customer)} · {dayLabel(e.date, ymd(), s.lang)}
+            {kindLabel(e.kind, s.lang)} · {customerName(e.customer)} · {e.ts ? entryWhen(e, new Date(), s.lang) : dayLabel(e.date, ymd(), s.lang)}
           </p>
         </>
       ) : null}

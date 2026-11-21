@@ -10,7 +10,7 @@
 import { Undo2 } from 'lucide-react';
 import type { Entry } from '../services/session/types';
 import { labels, type Lang } from '../i18n';
-import { amountParts, customerName, entryWhen, kindLabel, sinceLabel } from '../lib/format';
+import { amountParts, customerName, entryWhen, kindLabel, stamp } from '../lib/format';
 import { Amount } from './Amount';
 
 export interface EntryRowProps {
@@ -59,7 +59,7 @@ export function EntryRow({ entry, lang, onUndo, highlight = false, animate = fal
           ) : null}
           {entry.reversed ? <span className="text-ink-2"> · {L.removed}</span> : null}
         </span>
-        <span className="text-meta text-ink-2">{sinceLabel(entry.ts, now, lang)}</span>
+        <span className="text-meta text-ink-2">{stamp(entry.ts, now, lang)}</span>
       </Tag>
     );
   }

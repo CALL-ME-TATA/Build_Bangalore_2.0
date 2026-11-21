@@ -2,7 +2,7 @@
 // the "Kul baaki" summary and the date line under the title. No React, no I/O; tested in logic.test.ts.
 import type { Customer } from '../../services/api';
 import type { Entry } from '../../services/session/types';
-import { ymd } from '../../lib/format';
+import { stamp, ymd } from '../../lib/format';
 import type { Lang } from '../../i18n';
 import { khataLabels, type KhataLabelKey } from './labels';
 
@@ -152,24 +152,14 @@ export function tagLabel(tags: readonly string[]): string {
   return tag ? tag.charAt(0).toLocaleUpperCase() + tag.slice(1) : '';
 }
 
-function dayIndex(d: Date): number {
-  return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
-}
-
 /**
- * The activity line of a row: "Aakhri entry aaj" / "kal" / "5 din pehle" (English: "Last entry today" ...),
- * from the time the latest entry was recorded. Null when the customer has no entry in the loaded window.
+ * The activity line of a row: when the latest entry was written, with its date and time
+ * ("Aakhri entry: Aaj, 21 Nov · 11:42"; English "Last entry: Today, 21 Nov · 11:42"). Null when the customer has no entry in the loaded window.
  */
 export function lastEntryText(entry: Pick<Entry, 'ts'> | undefined, now: Date, lang: Lang): string | null {
   if (!entry) return null;
   const ms = Date.parse(entry.ts);
   if (Number.isNaN(ms)) return null;
   const K = khataLabels(lang);
-  const days = Math.max(0, dayIndex(now) - dayIndex(new Date(ms)));
-  const when = days === 0 ? K.whenToday : days === 1 ? K.whenYesterday : fillDays(K.whenDaysAgo, days);
-  return `${K.lastEntry} ${when}`;
-}
-
-function fillDays(template: string, n: number): string {
-  return template.replace('{n}', String(n));
+  return `${K.lastEntry}: ${stamp(entry.ts, now, lang)}`; // "Aakhri entry: Aaj, 21 Nov · 11:42"
 }
