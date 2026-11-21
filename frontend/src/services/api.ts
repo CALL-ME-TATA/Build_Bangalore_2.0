@@ -108,11 +108,14 @@ export async function getReminders(): Promise<Reminder[]> {
   return d.reminders ?? [];
 }
 
-/** POST /api/reminders/queue: queue one reminder per opted-in customer who owes money. Returns the new ids. */
-export async function queueReminders(): Promise<number[]> {
-  if (isMock()) return [];
-  const d = await request<{ queued?: number[] }>('/api/reminders/queue', { method: 'POST' });
-  return d.queued ?? [];
+/**
+ * POST /api/reminders/queue: queue one reminder per opted-in customer who owes money. Returns the new ids, and
+ * `quietHours: true` outside sending hours (09:00 to 20:00 shop time), when the server queues nothing.
+ */
+export async function queueReminders(): Promise<{ queued: number[]; quietHours: boolean }> {
+  if (isMock()) return { queued: [], quietHours: false };
+  const d = await request<{ queued?: number[]; quiet_hours?: boolean }>('/api/reminders/queue', { method: 'POST' });
+  return { queued: d.queued ?? [], quietHours: d.quiet_hours === true };
 }
 
 /** POST /api/customers/{id}/reminders: set the reminder opt-in (and optionally the phone number). */

@@ -10,10 +10,11 @@ import { customerLabels, type CustomerLabelKey } from './labels';
 export interface TimelineItem {
   entry: Entry;
   /**
-   * A removed entry shown struck through just above this one. When the entry carries `replaces`, it is paired with
-   * the entry that id names (even on another date). Only when `replaces` is null or absent (an older server) is it
-   * paired by position: with the next entry of the same customer recorded after it, when that one is active and
-   * dated the same day. A removed entry with no partner (an undo) is listed on its own. Either way nothing is hidden.
+   * A removed entry shown struck through just above this one. When `replaces` holds an id, the entry is paired with
+   * the entry that id names (even on another date); `replaces: null` means it corrected nothing. Only when the field
+   * is absent (an older server) is it paired by position: with the next entry of the same customer recorded after
+   * it, when that one is active and dated the same day. A removed entry with no partner (an undo or a removal on the
+   * screen) is listed on its own. Either way nothing is hidden.
    */
   replaced?: Entry;
 }
@@ -70,7 +71,7 @@ function pairById(mine: readonly Entry[]): Map<Entry, Entry> {
 
 /**
  * One customer's entries grouped by effective date, newest date first, newest entry first in each group. A
- * correction sits with the entry it replaced (by `replaces`; by position when that is null or absent).
+ * correction sits with the entry it replaced (by `replaces`; by position only when the field is absent).
  */
 export function customerTimeline(entries: readonly Entry[], customerId: string, now: Date, lang: Lang): TimelineGroup[] {
   const mine = entries.filter((e) => e.customer.id === customerId).sort(newerFirst);
@@ -102,7 +103,7 @@ export function customerTimeline(entries: readonly Entry[], customerId: string, 
       if (byReplaces) {
         items.push({ entry: e, replaced: byReplaces });
       } else if (
-        (e.replaces === null || e.replaces === undefined) &&
+        e.replaces === undefined &&
         !e.reversed &&
         older &&
         older.reversed &&

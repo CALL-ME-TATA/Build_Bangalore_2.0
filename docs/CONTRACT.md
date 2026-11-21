@@ -1114,7 +1114,8 @@ Rules
   characters (`bad_tag`). Phone: an Indian mobile number (10 digits, with or without 91, +91 or 0) or null to clear it
   (`bad_phone`); the reminder opt-in does not change.
 - Every `/api/ledger` entry carries `"replaces"`: the id of the entry it corrected, or null. The customer screen
-  pairs a correction with the entry it replaced by that id, and by position only when it is null.
+  pairs a correction with the entry it replaced by that id; null means the entry corrected nothing. Only an entry
+  without the field (an older server) is paired by position.
 
 Voice sessions stay safe
 - After an append or amend the session remembers the ids of the events it saved. If any of them is no longer active

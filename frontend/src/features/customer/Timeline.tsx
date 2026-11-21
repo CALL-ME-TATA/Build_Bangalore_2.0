@@ -39,7 +39,8 @@ export function Timeline({ groups, lang, now, cut, onEdit }: TimelineProps) {
               {g.items.map((it) => {
                 const e = it.entry;
                 const word = kindLabel(e.kind, lang);
-                const label = it.replaced ? `${word} · ${C.corrected}` : e.reversed ? `${word} · ${L.removed}` : word;
+                // A correction that was later removed says "hataya": the label gives the entry's state now.
+                const label = e.reversed ? `${word} · ${L.removed}` : it.replaced ? `${word} · ${C.corrected}` : word;
                 const body = (
                   <>
                     {it.replaced ? (

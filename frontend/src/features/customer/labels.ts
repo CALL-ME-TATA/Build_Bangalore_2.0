@@ -19,6 +19,8 @@ const hi = {
   reminderOpenSr: 'WhatsApp mein khulega',
   reminderNoPhone: 'Inka phone number save nahi hai. Number daalein, phir WhatsApp link banega.',
   reminderNone: 'Reminder nahi bana. Thodi der baad dobara koshish karein.',
+  reminderQuietHours:
+    'Reminder sirf subah 9 se raat 8 baje tak bante hain, taaki kisi ko raat mein message na jaaye. Subah 9 baje ke baad dabaiye.',
   reminderFailed: 'Reminder nahi bana. Internet dekhiye aur dobara dabaiye.',
   phoneLabel: 'Mobile number',
   phoneHint: '10 ankon ka number, jaise 98xxxxxx10',
@@ -140,6 +142,8 @@ const en: CustomerLabels = {
   reminderOpenSr: 'opens WhatsApp',
   reminderNoPhone: 'No phone number is saved. Add one to get the WhatsApp link.',
   reminderNone: 'The reminder was not created. Try again in a moment.',
+  reminderQuietHours:
+    'Reminders are made only between 9 am and 8 pm, so no one gets a message at night. Press again after 9 am.',
   reminderFailed: 'The reminder was not created. Check the internet and press again.',
   phoneLabel: 'Mobile number',
   phoneHint: '10 digits, like 98xxxxxx10',

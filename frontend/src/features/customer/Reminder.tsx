@@ -23,7 +23,12 @@ import { fill } from '../khata/labels';
 import { customerLabels } from './labels';
 import { normalizePhone, reminderAvailability, reminderFor, safeWaLink } from './logic';
 
-type Outcome = { kind: 'ready'; reminder: Reminder } | { kind: 'none' } | { kind: 'failed' } | null;
+type Outcome =
+  | { kind: 'ready'; reminder: Reminder }
+  | { kind: 'none' }
+  | { kind: 'quiet' } // outside sending hours: the server queues nothing until 09:00
+  | { kind: 'failed' }
+  | null;
 
 export function ReminderPanel({ customer, lang, synthetic }: { customer: Customer; lang: Lang; synthetic: boolean }) {
   const C = customerLabels(lang);
@@ -37,7 +42,12 @@ export function ReminderPanel({ customer, lang, synthetic }: { customer: Custome
   const send = async () => {
     setBusy(true);
     try {
-      if (!synthetic) await queueReminders();
+      const queue = synthetic ? null : await queueReminders();
+      if (queue?.quietHours) {
+        setOutcome({ kind: 'quiet' });
+        announce(C.reminderQuietHours);
+        return;
+      }
       const found = synthetic ? null : reminderFor(await getReminders(), customer.id);
       setOutcome(found ? { kind: 'ready', reminder: found } : { kind: 'none' });
       announce(found ? C.reminderReady : C.reminderNone);
@@ -140,6 +150,7 @@ function ReminderOutcome({ outcome, lang, customerId, saving, onSaving, onReady 
   const C = customerLabels(lang);
   if (outcome.kind === 'failed') return <p className="text-meta text-ink">{C.reminderFailed}</p>;
   if (outcome.kind === 'none') return <p className="text-meta text-ink">{C.reminderNone}</p>;
+  if (outcome.kind === 'quiet') return <p className="text-meta text-ink">{C.reminderQuietHours}</p>;
   const r = outcome.reminder;
   const link = safeWaLink(r.wa_link);
   return (

@@ -185,9 +185,9 @@ describe('customerTimeline pairing by replaces', () => {
     expect(g[1]?.items.map((i) => [i.entry.id, i.replaced?.id ?? null])).toEqual([[2, null]]);
   });
 
-  test('the id wins over position; an entry with replaces null still pairs by position', () => {
+  test('the id wins over position; replaces null is not a correction, so it never takes a removed entry', () => {
     const e = [
-      entry(1, 'r', 'credit', 100, at(21, 9), '2026-11-21', true), // removed; entry 3 sits right after it
+      entry(1, 'r', 'credit', 100, at(21, 9), '2026-11-21', true), // removed on the screen; entry 3 comes right after
       entry(2, 'r', 'credit', 200, at(21, 9, 1), '2026-11-21', true), // replaced by 4
       withReplaces(entry(3, 'r', 'credit', 300, at(21, 9, 2), '2026-11-21'), null),
       withReplaces(entry(4, 'r', 'credit', 250, at(21, 9, 3), '2026-11-21'), 2),
@@ -195,8 +195,30 @@ describe('customerTimeline pairing by replaces', () => {
     const items = customerTimeline(e, 'r', NOW, 'hi')[0]?.items ?? [];
     expect(items.map((i) => [i.entry.id, i.replaced?.id ?? null])).toEqual([
       [4, 2],
-      [3, 1],
+      [3, null],
+      [1, null],
     ]);
+  });
+
+  test('a correction that was later removed is labelled hataya, with the old amount still shown', () => {
+    const e = [
+      withReplaces(entry(1, 'r', 'credit', 111, at(21, 9), '2026-11-21', true), null),
+      withReplaces(entry(2, 'r', 'credit', 122, at(21, 9, 1), '2026-11-21', true), 1),
+    ];
+    const groups = customerTimeline(e, 'r', NOW, 'hi');
+    const html = renderToStaticMarkup(createElement(Timeline, { groups, lang: 'hi', now: NOW, cut: false }));
+    expect(html).toContain('Udhaar · hataya');
+    expect(html).not.toContain('Udhaar · sudhaara');
+    expect(html.indexOf('>111<')).toBeLessThan(html.indexOf('>122<'));
+  });
+
+  test('without the replaces field (an older server) a removed entry still pairs by position', () => {
+    const e = [
+      entry(1, 'r', 'credit', 100, at(21, 9), '2026-11-21', true),
+      entry(2, 'r', 'credit', 300, at(21, 9, 2), '2026-11-21'),
+    ];
+    const items = customerTimeline(e, 'r', NOW, 'hi')[0]?.items ?? [];
+    expect(items.map((i) => [i.entry.id, i.replaced?.id ?? null])).toEqual([[2, 1]]);
   });
 
   test('a chain keeps every entry visible', () => {
