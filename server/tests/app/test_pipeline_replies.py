@@ -1,14 +1,25 @@
 """Pipeline behaviour (disclosure, clarification saves nothing) and reply rendering for each template."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
+import pytest
+
+from app.pipeline import Pipeline
 from app.replies import Replier, fmt_amount
 
 from .conftest import fake_nw
 
 R = Replier(fake_nw)
 TODAY = date(2026, 11, 21)
+
+
+@pytest.fixture
+def pipeline(ledger, settings, parser):
+    """The cases here are written for the shop day TODAY, so the pipeline's clock stays at its noon."""
+    noon = datetime(TODAY.year, TODAY.month, TODAY.day, 12, 0, tzinfo=ZoneInfo(settings.shop_tz))
+    return Pipeline(ledger, settings, parse=parser, number_to_words=fake_nw, now=lambda: noon)
 
 
 def test_first_reply_discloses_ai(pipeline, state):

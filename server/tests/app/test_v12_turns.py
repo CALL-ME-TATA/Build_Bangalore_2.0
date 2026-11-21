@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -14,6 +15,13 @@ from .conftest import _ev, apply_events, fake_nw
 TODAY = date(2026, 11, 21)
 R = Replier(fake_nw)
 EN = R.with_lang("en")
+
+
+@pytest.fixture
+def pipeline(ledger, settings, parser):
+    """The cases here are written for the shop day TODAY, so the pipeline's clock stays at its noon."""
+    noon = datetime(TODAY.year, TODAY.month, TODAY.day, 12, 0, tzinfo=ZoneInfo(settings.shop_tz))
+    return Pipeline(ledger, settings, parse=parser, number_to_words=fake_nw, now=lambda: noon)
 
 
 def count_events(ledger) -> int:
