@@ -3835,17 +3835,6 @@ def _one_event_index(pending: dict, events: list[dict], ctype: Any) -> int | Non
     return _event_index(pending, events) if ctype in _ONE_EVENT_CONFIRMS else None
 
 
-def _names_someone_else(fresh: dict, pending_events: list[dict]) -> bool:
-    """The fresh parse of an answer holds an entry with an amount for a customer the open question is not about."""
-    if fresh.get("status") not in ("ok", "needs_clarification"):
-        return False
-    pending = fresh.get("pending") if isinstance(fresh.get("pending"), dict) else {}
-    new = [e for e in (fresh.get("events") or []) + (pending.get("events") or []) if isinstance(e, dict)]
-    asked = {fold(str(e.get("customer") or "").lower()) for e in pending_events if e.get("customer")}
-    return any(isinstance(e.get("amount"), int) and e.get("customer")
-               and fold(str(e["customer"]).lower()) not in asked for e in new)
-
-
 def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pending: dict) -> dict | None:
     reason = pending.get("reason")
     action = pending.get("action") or "append"
@@ -3874,10 +3863,6 @@ def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pen
             return _rejected("cancelled")
         return fresh_result
     if fresh_d.complete and not (fresh_d.action == "query" and not _kws(sig) & _QUERY_WORDS):
-        return fresh_result
-    if _names_someone_else(fresh_result, events):
-        # "Tane se 200 wapis aaye" was misheard; the shopkeeper says it again: "Tanish se 200 wapis aaye". A new
-        # sentence with an amount and another customer replaces the open question instead of answering it.
         return fresh_result
 
     confirm = pending.get("confirm") if isinstance(pending.get("confirm"), dict) else None

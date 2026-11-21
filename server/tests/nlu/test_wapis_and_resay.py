@@ -1,4 +1,5 @@
-""""Tanish se 200 wapis aaye" is a payment; saying a sentence again after a mishearing replaces the question."""
+""""Tanish se 200 wapis aaye" is a payment, so saying it again after a mishearing is a complete entry and
+replaces the open question (CONTRACT: only a complete entry or a query replaces one)."""
 from __future__ import annotations
 
 from datetime import date
@@ -33,7 +34,7 @@ def test_shop_paying_back_still_asks():
     assert (r["status"], r["reason"]) == ("needs_clarification", "ambiguous_direction")
 
 
-def test_saying_it_again_with_the_right_name_replaces_the_question():
+def test_saying_the_complete_sentence_again_replaces_the_question():
     misheard = parse("tane se do sau rupaye wapis aaye.", today=T, ctx=CTX)
     assert misheard["status"] == "needs_clarification" and events(misheard)[0]["customer"] == "tane"
     again = parse("Tanish se do sau rupaye wapis aaye.", today=T, ctx=dict(CTX, pending=misheard["pending"]))
