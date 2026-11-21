@@ -757,8 +757,9 @@ Answers
 - An utterance that is refused when it is parsed on its own (`negated`, `future`, `out_of_scope`, `too_large`,
   `invalid_number`) is never an answer to an open question, whatever number or name it holds. The refusal is the
   result and nothing is saved: with `₹75,000, pakka?` open, `Ramesh ka 200 udhaar nahi hai` saves nothing, and
-  with `₹340 ya ₹400?` open, `Ramesh ne 200 ka saaman liya paise de diye` saves nothing. The question stays open,
-  except that a `negated` utterance cancels an open yes-or-no question.
+  with `₹340 ya ₹400?` open, `Ramesh ne 200 ka saaman liya paise de diye` saves nothing. A `negated` utterance
+  cancels an open yes-or-no question. After any other refusal the open question is closed as well and the entry
+  has to be said again.
 - With `limits.noisy` (3.5) a correction that would be applied is confirmed with the `amend` confirmation (old and
   new amount), not with the entry wording.
 - Same-name answers: ordinals follow the order the question was spoken in (the order of `candidates`), for two

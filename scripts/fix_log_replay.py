@@ -315,7 +315,8 @@ CASES: list[tuple[str, dict, list]] = [
     ("11.1", FOUR, ["Ramesh ka 75000 udhaar", "Ramesh ka 200 udhaar nahi hai", "haan"]),
     ("11.2", FOUR, ["Ramesh ka teen chaar sau udhaar", "Ramesh ne 200 ka saaman liya paise de diye", "haan"]),
     ("11.3", FOUR, ["Ramesh ko udhaar", "Ramesh ko 200 dene hain"]),
-    ("11.4", FOUR, ["Ramesh ka teen chaar sau udhaar", "Wholesaler ko 5000 diye", "pehla"]),
+    ("11.3b", FOUR, ["Ramesh ka teen chaar sau udhaar", "Wholesaler ko 5000 diye", "pehla"]),
+    ("11.4", FOUR, ["Ramesh ka 340 udhaar", ("noisy", "nahi, 430"), "haan"]),
 ]
 
 

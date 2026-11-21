@@ -187,3 +187,89 @@ def test_two_amounts_in_an_answer_never_save(label, utterance, ctx, reason, kind
     if reason in ("missing_amount", "plausibility", "confusable_number", "confirm_entry") and r["status"] == \
             "needs_clarification":
         assert r["reason"] in ("confusable_number", reason, "missing_amount"), r
+
+
+# --- 1.18 (follow-up 3): a sentence refused on its own is never an answer ------------------------------------------
+
+REFUSALS = {
+    "negated": "{x} ka {n} udhaar nahi hai",
+    "future": "{x} ko {n} dene hain",
+    "out_of_scope": "{x} ne {n} ka saaman liya paise de diye",
+    "too_large": "{x} ka {n}00000000 udhaar",
+    "invalid_number": "{x} ko minus {n} udhaar",
+}
+YES_NO = {"plausibility", "computed", "settle", "half", "writeoff", "roundoff", "overpayment", "duplicate", "hearsay",
+          "unsure", "replace", "confirm_undo"}
+
+
+def _is_yes_no(label, pending):
+    if label in YES_NO:
+        return True
+    return label == "new_customer" and not pending.get("candidates")
+
+
+@pytest.mark.parametrize("label,utterance,ctx,reason,kind", PENDINGS, ids=[p[0] for p in PENDINGS])
+@pytest.mark.parametrize("refusal", sorted(REFUSALS))
+@pytest.mark.parametrize("who", ["Ramesh", "Mohan"])
+@pytest.mark.parametrize("same_amount", [True, False])
+def test_a_refused_sentence_is_never_an_answer(label, utterance, ctx, reason, kind, refusal, who, same_amount):
+    pending = make_pending(utterance, ctx, reason, kind)
+    amounts = sorted(pending_amounts(pending))
+    n = amounts[0] if same_amount and amounts else 77
+    r = follow(pending, ctx, REFUSALS[refusal].format(x=who, n=n))
+    assert not (r["status"] == "ok" and r.get("action") in ("append", "amend")), r
+    expected = "cancelled" if refusal == "negated" and _is_yes_no(label, pending) else refusal
+    assert r["status"] == "rejected" and r["reason"] == expected, (label, r)
+
+
+@pytest.mark.parametrize("first,reply", [
+    ("Ramesh ka 75000 udhaar", "Ramesh ka 200 udhaar nahi hai"),
+    ("Ramesh ka teen chaar sau udhaar", "Ramesh ne 200 ka saaman liya paise de diye"),
+    ("Ramesh ko udhaar", "Ramesh ko 200 dene hain"),
+    ("Ramesh ka teen chaar sau udhaar", "Wholesaler ko 5000 diye"),
+    ("Ramesh ka 75000 udhaar", "Ramesh ka 5 crore udhaar"),
+])
+def test_review_cases_save_nothing(first, reply):
+    ctx = base_ctx()
+    r = follow(parse(first, today=T, ctx=ctx)["pending"], ctx, reply)
+    assert r["status"] == "rejected" and r["reason"] in ("negated", "cancelled", "out_of_scope", "future",
+                                                          "too_large"), r
+
+
+# Real answers that hold a "nahi" or a number still work (regression guard).
+
+def test_real_answers_to_plausibility_and_confirmations_still_work():
+    ctx = base_ctx()
+    plaus = make_pending("Ramesh ka 60000 udhaar", ctx, "plausibility", None)
+    assert follow(plaus, ctx, "nahi")["reason"] == "cancelled"
+    assert follow(plaus, ctx, "nahi 7500")["events"][0]["amount"] == 7500
+    over = make_pending("Ramesh ne 900 diye", ctx, "confirm_entry", "overpayment")
+    r = follow(over, ctx, "nahi, 300 jama")
+    assert r["status"] == "ok" and r["events"][0]["amount"] == 300 and r["events"][0]["kind"] == "payment", r
+    assert follow(over, ctx, "nahi")["reason"] == "cancelled"
+
+
+def test_real_answers_with_nahi_to_other_questions_still_work():
+    ctx = base_ctx()
+    who = make_pending("500 udhaar", ctx, "missing_customer", None)
+    assert follow(who, ctx, "Ramesh nahi Sunita")["events"][0]["customer"] == "sunita"
+    same = make_pending("Rakesh ka 200 udhaar", ctx, "same_name", None)
+    assert follow(same, ctx, "chai wale nahi")["reason"] == "same_name"  # a denied tag alone: asked again (1.15)
+    assert follow(same, ctx, "chai wale nahi, gali wale")["events"][0]["customer_id"] == "c5"
+    way = make_pending("Ramesh 500", ctx, "ambiguous_direction", None)
+    assert follow(way, ctx, "jama nahi udhaar")["events"][0]["kind"] == "credit"
+    new = make_pending("Geeta ne 150 diye", ctx, "new_customer", None)
+    assert follow(new, ctx, "nahi banana")["reason"] == "cancelled"
+    assert follow(new, ctx, "mat banao")["reason"] == "cancelled"
+    assert follow(new, ctx, "haan hata do")["reason"] == "cancelled"
+
+
+def test_noisy_amend_is_the_amend_confirmation():
+    ctx = base_ctx(last_event=LAST, last_events=[LAST], last_turn={"action": "append", "age_s": 5},
+                   limits={"noisy": True})
+    r = parse("nahi, 430", today=T, ctx=ctx)
+    assert r["reason"] == "confirm_entry" and r["confirm"] == {"type": "amend", "old": 340, "new": 430, "noise": True}
+    assert r["question"] == "Ramesh ki ₹340 udhaar entry ₹430 kar doon?"
+    c = dict(ctx, pending=r["pending"])
+    done = parse("haan", today=T, ctx=c)
+    assert done["action"] == "amend" and done["events"][0]["amount"] == 430

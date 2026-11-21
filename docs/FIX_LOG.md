@@ -21,13 +21,9 @@ The complete list of edge cases, pass or fail, is in [EDGE_CASES.md](EDGE_CASES.
 
 ## Open now
 
-- While a question is open, a sentence that would be refused on its own is still taken as an answer when it holds
-  a number: with "₹75,000, pakka?" open, `Ramesh ka 200 udhaar nahi hai` saves ₹200, and with "₹340 ya ₹400?" open,
-  `Ramesh ne 200 ka saaman liya paise de diye` saves ₹200. Found in the live check of the build that holds rounds 9
-  and 10; the rule is written (contract 1.18, Answers) and the fix is the next change. Replay ids 11.1 to 11.4.
+- After a sentence is refused while a question is open (round 11), that question is closed, so the entry has to be
+  said again. Nothing is saved wrongly.
 - `Ramesh ne 500 ka note diya, 200 kaate, 300 wapas kiye` asks "Kiska khata?" although Ramesh was named.
-- A correction spoken on a noisy turn (`nahi, 430`) is confirmed as "Ramesh ke ₹430 udhaar likhun?"; a yes corrects
-  the entry as it should, but the question does not say that the ₹340 entry is being replaced.
 - `his wife paid 200` with no earlier customer asks "Whose account?"; with one it asks to open "Ramesh ki biwi".
 
 ## Rounds at a glance
@@ -46,6 +42,7 @@ All times are 2026-11-21, IST.
 | 8 | 19:25 | Live check of the published build | two-entry sentences | 4 faults | 1.17 | f9ee05b |
 | 9 | 19:30 | Fourth independent review | about 1,300 turns | 10 wrong-save families, 13 other faults | 1.18, 3.4 | contract 1.7 |
 | 10 | 20:40 | Recorded clips with noise, through the live speech service | 240 turns (120 clips, noise handling off and on) | 1 wrong save in an experiment, 1 false alarm in the design | 3.5 | contract 1.7 |
+| 11 | 21:35 | Live check of the build that holds rounds 9 and 10 | the demo sentences and two review sentences, with questions open | 2 wrong saves | 1.18 (Answers) | contract 1.7 |
 
 ## Round 1: review of the first build
 
@@ -289,6 +286,18 @@ audio of a turn is noisy.
 | 10.2 | `Ramesh ka 340 udhaar` on a noisy turn → `haan` | Saved at once | Asks "Ramesh ke ₹340 udhaar likhun?", then saves | The same rule; a query on a noisy turn (`Ramesh ka total`) is still answered at once |
 | 10.3 | Any sentence, when the speaker starts talking as they press the button | The first design measured the background from the moment before the press, so the speaker's own first words counted as background and every such turn was "noisy" (12 of 12 clean clips) | Not noisy: clean and lightly noisy clips are never flagged, with or without a lead-in | The background level is the lower of the pre-press level and the level a quarter of the turn's frames are below |
 | 10.4 | Sentences with a voice in the background before or after the speaker (`Sunita paid five hundred rupees. So, paanch.`, `Geeta ne nau sau pachas rupaye diye Mohan.`) | The extra words reached the parser and led to a question | Audio outside the speaker's own burst reaches the speech service 12 dB quieter; in the 120-turn test this changed one result (10 of 12 saved at 10 dB of babble against 9) | The foreground gate; it never removes audio and does nothing when speaker and background are too close |
+
+## Round 11: a refused sentence said while a question is open
+
+Tests: `server/tests/nlu/test_pending_cross.py` (every kind of open question crossed with a sentence of every
+refusal reason; 1,000 cases in that file). Rules: contract 1.18, "Answers". Ramesh owes ₹1,030.
+
+| # | Said | Before | Now | Fix |
+|---|---|---|---|---|
+| 11.1 | `Ramesh ka 75000 udhaar` → "₹75,000, pakka?" → `Ramesh ka 200 udhaar nahi hai` | Saved ₹200 credit: the 200 was taken as the corrected amount | "Theek hai, entry nahi ki." Nothing is saved | A sentence that is refused on its own is never an answer; a negation cancels a yes-or-no question |
+| 11.2 | `Ramesh ka teen chaar sau udhaar` → "₹340 ya ₹400?" → `Ramesh ne 200 ka saaman liya paise de diye` | Saved ₹200 credit | Refused as a cash sale. Nothing is saved | The same rule, for `out_of_scope` |
+| 11.3 | "Kitne rupaye?" → `Ramesh ko 200 dene hain`; "₹340 ya ₹400?" → `Wholesaler ko 5000 diye` | Repeated the question (nothing saved) | Refused as not yet happened; refused as out of scope | The refusal is the result, as it is with no question open |
+| 11.4 | `Ramesh ka 340 udhaar` → `nahi, 430` on a noisy turn | Asked "Ramesh ke ₹430 udhaar likhun?", which did not say an entry was being replaced | Asks "Ramesh ki ₹340 udhaar entry ₹430 kar doon?" | On a noisy turn a correction is confirmed with the correction wording |
 
 ## Known limits that are not faults of a rule
 

@@ -3327,6 +3327,18 @@ def _noise_gate(result: dict, ctx: dict) -> dict:
     already raised keeps its words and gains `noise: true`. Queries, undo and other questions are left alone."""
     if not _lim(ctx, "noisy", False):
         return result
+    if result.get("status") == "ok" and result.get("action") == "amend":
+        events = result.get("events") or []
+        old = _amend_base(result.get("target"), ctx)
+        if old is not None and len(events) == 1:
+            confirm = {"type": "amend", "old": old.get("amount"), "new": events[0].get("amount"), "noise": True}
+            extra = {"confirm": confirm}
+            if result.get("target") not in (None, "last"):
+                extra["target"] = result["target"]
+            out = _clarify("confirm_entry", "amend", events, extra=extra, question=_confirm_question(confirm, events))
+            if result.get("lang"):
+                out["lang"] = result["lang"]
+            return out
     if result.get("status") == "ok" and result.get("action") in ("append", "amend"):
         events = result.get("events") or []
         confirm = {"type": "unsure", "words": [], "noise": True}
@@ -3349,6 +3361,15 @@ def _noise_gate(result: dict, ctx: dict) -> dict:
 
 # Words that are never a name and say nothing about the entry: in strict mode the entry is confirmed (1.18).
 _STRICT_STRAYS = frozenset(fold(w) for w in "another out by sabko kisi koi jo".split())
+
+
+def _amend_base(target: Any, ctx: dict) -> dict | None:
+    """The saved entry an amend replaces: the one with target.event_id, else the last event."""
+    if isinstance(target, dict) and target.get("event_id") is not None:
+        for e in _last_events(ctx):
+            if e.get("id") == target["event_id"]:
+                return e
+    return _last_event(ctx)
 
 
 def _strict_gate(result: dict, d: _Draft, ctx: dict) -> dict:
@@ -3698,6 +3719,29 @@ def _answer_correction(sig, toks, utterance, today, ctx, pending, events) -> dic
 
 
 _ONE_EVENT_CONFIRMS = {"overpayment", "settle", "half", "writeoff", "roundoff"}
+_REFUSALS = {"negated", "future", "out_of_scope", "too_large", "invalid_number"}
+_DIRECTION_OR_LEDGER = _LEDGER_CUES | {"credit", "paid", "gave", "took", "received", "owes", "lent", "dene", "lene",
+                                       "advance", "saaman", "paymode", "wapas"}
+
+
+def _own_sentence(sig: list[Tok]) -> bool:
+    """An utterance that is a sentence of its own, not an answer: its own customer name or its own amount, together
+    with a direction or ledger word (1.18). "nahi", "nahi 7500", "Ramesh nahi Sunita", "jama nahi udhaar",
+    "mat banao" are answers; "Ramesh ka 200 udhaar nahi hai", "Wholesaler ko 5000 diye" are sentences."""
+    has_name = any(r.key for r in _name_runs(sig))
+    has_amount = any(t.cls in ("amt", "negamt") for t in sig)
+    return (has_name or has_amount) and bool(_kws(sig) & _DIRECTION_OR_LEDGER)
+
+
+def _yes_no_question(pending: dict) -> bool:
+    """Questions answered by yes or no: plausibility, every confirmation, the plain new-customer question, the
+    replace check and the undo check."""
+    reason = pending.get("reason")
+    if reason in ("plausibility", "confirm_entry"):
+        return True
+    if reason == "new_customer":
+        return not [c for c in (pending.get("candidates") or []) if isinstance(c, dict)]
+    return reason == "unclear_correction" and pending.get("mode") in ("replace", "confirm_undo")
 # Words that make an answer a complete query (1.18): anything less is read as an answer.
 _QUERY_WORDS = {"kitna", "kya", "kiska", "kis", "kaun", "batao", "total", "hisaab", "balance", "summary", "sabse",
                 "kab", "outstanding", "kul", "baaki"}
@@ -3735,6 +3779,14 @@ def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pen
     # A complete entry (customer, amount and direction) or a query is a new utterance, never an answer: it is
     # parsed fresh and the pending question is dropped (1.9, 1.13). This holds for every pending reason.
     fresh_result, fresh_d = _fresh(toks, utterance, today, ctx)
+    if (fresh_result.get("status") == "rejected" and fresh_result.get("reason") in _REFUSALS
+            and _own_sentence(sig)):
+        # A sentence refused on its own is never an answer (1.18): "Ramesh ka 200 udhaar nahi hai" to
+        # "pakka?", "Ramesh ne 200 ka saaman liya paise de diye" to "340 ya 400?". A negated one cancels an open
+        # yes-or-no question; otherwise the refusal is the result and the server keeps the question open.
+        if fresh_result.get("reason") == "negated" and _yes_no_question(pending):
+            return _rejected("cancelled")
+        return fresh_result
     if fresh_d.complete and not (fresh_d.action == "query" and not _kws(sig) & _QUERY_WORDS):
         return fresh_result
 
