@@ -263,7 +263,8 @@ class LiveStack:
         return [{"id": r["id"], "kind": r["kind"], "customer": names.get(r["customer_id"]),
                  "amount": r["amount_paise"] // 100, "date": r["effective_date"], "ts": r["ts"],
                  "active": r["kind"] != "reversal" and r["id"] not in reversed_ids,
-                 "session_id": r["session_id"], "utterance_id": r["utterance_id"]} for r in raw]
+                 "session_id": r["session_id"], "utterance_id": r["utterance_id"],
+                 "adjustment": r.get("adjustment")} for r in raw]
 
     def balance(self, name: str) -> int:
         return sum((r["amount"] if r["kind"] == "credit" else -r["amount"])

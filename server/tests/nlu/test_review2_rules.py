@@ -397,7 +397,9 @@ def test_B12_shop_paying_or_owing_is_out_of_scope(utterance):
 
 
 def test_B12_two_customers_paying_one_amount_asks():
-    assert run("Ramesh and Sunita paid 500")["reason"] == "missing_amount"
+    r = run("Ramesh and Sunita paid 500")
+    assert r["reason"] == "missing_customer"  # 1.17: the amount and direction are kept
+    assert r["pending"]["events"] == [{"kind": "payment", "amount": 500, "date": "2026-11-21"}]
 
 
 @pytest.mark.parametrize("utterance", ["Ramesh ne 500 ka maal lautaya", "Ramesh ne saaman wapas kiya 200",

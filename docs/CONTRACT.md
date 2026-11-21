@@ -1,4 +1,4 @@
-# CONTRACT v1.4 (2026-11-21)
+# CONTRACT v1.5 (2026-11-21)
 
 The binding interface specification for KhataVaani. Changes go through the tech lead.
 Where this file disagrees with an older note, this file wins.
@@ -550,6 +550,18 @@ Other
 - `yaad` is not a reminder word. A token is split into particle and number (`ko` + `char`) only when the sentence
   then has a stored or carried customer; otherwise it stays whole and is a name (`Kochar ko 500 udhaar`).
 
+Names that speech-to-text repeats, splits or joins (from a real voice session; they need `ctx.customers`)
+- A name written twice in two spellings is one name: when every spoken name word is the same person (1.12) as one
+  and the same stored customer, the words collapse to that customer (`Ramish Ramesh ne 5 diye` → Ramesh). A real
+  two-word name (`Ramesh Chopra`) and two different stored customers are never collapsed.
+- A name written in two pieces, or two pieces written as one: when the spoken words joined together are the same
+  person as exactly one stored name joined together, it is that customer (`Diwa Kar` → stored `divakar`;
+  `Mohanlal` → stored `mohan lal`). With two stored customers that fit, nothing is picked and the new-customer
+  question decides.
+- In the close-name comparison (1.14, E09) `sh`, `ch`, `th`, `kh`, `gh`, `ph`, `bh`, `dh` and `jh` each count as one
+  consonant, and a differing first consonant counts like any other (`Jamesh` offers Ramesh, `Tanishke` offers
+  Tanishk).
+
 ### 1.16 Rules from the third review (v1.4; they override anything above that disagrees)
 
 Questions state what will be saved
@@ -627,6 +639,46 @@ Answers
 - The duplicate question takes only yes or no; a number is a failed attempt.
 - Same-name and which-entry questions name what they are about: the clause's amount for a same-name question in a
   two-clause sentence, and the customer for each entry in a which-entry question.
+
+### 1.17 Questions in sentences with several entries (v1.5; they override anything above that disagrees)
+
+One question, one entry
+- Every question about one event of several carries `pending.index` for that event. This includes `plausibility`, the
+  small-amount check and `confirm_entry` types `overpayment`, `settle`, `half`, `writeoff` and `roundoff`. The parser's
+  `question` and the server's reply use that event's customer and amount and that customer's balance; a reply never
+  pairs one customer's name with another customer's balance or amount. `Ramesh ne 500 diye aur Mohan ne 200 diye`
+  with Mohan owing 140 → `confirm_entry` `overpayment`, `index: 1`, `confirm.balance: 140`,
+  `Mohan ke sirf ₹140 baaki hain. ₹200 hi likhun?`.
+- Each event is checked on its own and a yes answers only the question that was asked. The amount checks
+  (plausibility, small amount) run first, in event order, then the over-payment and other one-entry confirmations,
+  in event order. When a later event also needs a confirmation it is asked next; the entries are saved when no
+  event is left to confirm.
+  `Ramesh ka 99000 udhaar aur Mohan ka 88000 udhaar` → `₹99,000, pakka?`, `haan`, `₹88,000, pakka?`, `haan`, saved.
+  `Ramesh ne 2000 diye aur Mohan ne 200 diye` with both above their balance asks about Ramesh, then about Mohan.
+  A no to any of them cancels the whole utterance. An amount is still never asked about twice.
+
+Balance instructions and reductions stay in their clause
+- `poora de diya`, `aadha de diya`, `baaki maaf kar do`, `round off kar do` and a reduction with an amount
+  (`200 maaf kar do`) belong to the clause they are spoken in. Their customer is that clause's customer, and an amount
+  is never taken from another clause. No other entry of the utterance is changed or dropped.
+- In an utterance with other entries a balance instruction is not worked out from the balance. Its event keeps its
+  own customer and kind (`payment` for `poora` / `aadha`, `writeoff` for `maaf` / `chhod do` / `round off`) and has no
+  amount → needs_clarification `missing_amount` with its `index`; the other entries stay in the pending result.
+  `Ramesh ka 200 udhaar aur Mohan ka baaki maaf kar do` → events [credit 200 for Ramesh, writeoff for Mohan with no
+  amount], `index: 1`; it never becomes a write-off of 200 for Ramesh.
+- A reduction with its own amount in its own clause (`Ramesh ka 200 udhaar aur Mohan ke 50 maaf kar do`) is a
+  `writeoff` event of that amount for that clause's customer: `confirm_entry` `writeoff` with its `index`; the other
+  entry stays in the pending result.
+
+What was said is kept
+- An utterance with exactly one amount and one direction never produces a pending event without that amount.
+- Two names with one amount and one direction word, where the amount cannot be given to one of them
+  (`Ramesh ka khata, Sunita ko 1500 udhaar`; `Maya, Shivakumar ko 1500 udhaar`, where a stray word was heard as a
+  name; `Ramesh aur Sunita ko 500 udhaar`) → needs_clarification `missing_customer`. The pending event keeps the
+  amount, the date and the kind when the words give one, and has no customer. The answer is a name; 1.8 and the
+  new-customer question apply, and a missing direction is asked after it.
+- `Ramesh ka 100 udhaar aur Sunita ko udhaar` (two direction words, one amount) stays `missing_amount` with
+  `index: 1`, and `Ramesh ne 500 diye Sunita bhi` stays `missing_amount` (1.4, 1.15).
 
 ## 2. Ledger (`server/app/ledger.py`), SQLite with field-level AES-256-GCM
 
@@ -954,6 +1006,8 @@ from `nlu.speak.number_to_words`, sent to TTS). Keep them under about 12 words. 
 | Confirm `review` (1.16) | `2 entry likhun: {name} ke ₹{a} udhaar, {name2} se ₹{b} jama?` | `Save 2 entries: ₹{a} credit for {name}, ₹{b} received from {name2}?` |
 | Confirm `amend` (1.16) | `{name} ki ₹{old} {udhaar\|jama} entry ₹{new} kar doon?` | `Change {name}'s ₹{old} {credit\|payment} entry to ₹{new}?` |
 | Confirm `writeoff` with an amount (1.16) | `{name} ke ₹{amt} maaf karun?` | `Write off ₹{amt} for {name}?` |
+| Missing amount, several entries pending (1.17) | `{name} ke kitne rupaye?` | `How many rupees for {name}?` |
+| Plausibility, several entries pending (1.17) | `{name} ke ₹{amt}, pakka?` | `₹{amt} for {name}, are you sure?` |
 | Confirm `duplicate` (K01) | `Yeh entry abhi likhi hai. Ek aur likhun?` | `I just saved this entry. Save another one?` |
 | Write-off saved | `{name} ke ₹{amt} maaf kiye.` | `Wrote off ₹{amt} for {name}.` |
 | Silence (M02) | `Kuch sunai nahi diya. Dobara boliye.` | `I could not hear anything. Please say it again.` |

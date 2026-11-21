@@ -891,8 +891,10 @@ def _clarify(reason: str, action: str, events: list[dict], *, candidates: Any = 
     return result
 
 
-def _confirm_question(confirm: dict, events: list[dict]) -> str:
-    ev = events[0] if events else {}
+def _confirm_question(confirm: dict, events: list[dict], index: int | None = None) -> str:
+    """The question for a confirmation. `index` is the event it is about when the utterance has several (1.17)."""
+    many = isinstance(index, int) and 0 <= index < len(events) and len(events) >= 2
+    ev = events[index] if many else (events[0] if events else {})
     name = _display(ev.get("customer", ""))
     amt = _rupees(ev.get("amount", 0))
     t = confirm.get("type")
@@ -908,6 +910,10 @@ def _confirm_question(confirm: dict, events: list[dict]) -> str:
     if t == "roundoff":
         return f"{amt} chhod dun?"
     if t == "overpayment":
+        if many and not bal:
+            return f"{name} ka kuch baaki nahi. {amt} advance likhun?"
+        if many:
+            return f"{name} ke sirf {_rupees(bal or 0)} baaki hain. {amt} hi likhun?"
         return f"Sirf {_rupees(bal or 0)} baaki hain, {amt} hi?"
     if t == "duplicate":
         return f"Yeh entry abhi likhi thi: {name}, {amt}. Phir se likhun?"
@@ -1124,15 +1130,20 @@ def _finalize(events: list[dict], action: str, ctx: dict, *, confirmed: set[str]
             index, cands = hit
             return _clarify("confusable_number", action, events, candidates=cands, index=index,
                             confirmed=confirmed, extra=dict(extra, confirm=confirm))
+    many = len(events) >= 2
+    c_index = _confirm_index(confirm, events) if confirm and many else None
     if confirm and "confirm_entry" not in confirmed:
         return _clarify("confirm_entry", action, events, confirmed=confirmed, extra=dict(extra, confirm=confirm),
-                        question=_confirm_question(confirm, events))
+                        index=c_index, question=_confirm_question(confirm, events, c_index))
     if confirm and confirm.get("type") in ("settle", "half", "writeoff", "roundoff", "computed"):
-        confirmed.add("plausibility")  # the amount itself was just confirmed
+        # the amount itself was just confirmed; with several events only that event's amount (1.17)
+        confirmed.add(f"plausibility@{c_index}" if c_index is not None else "plausibility")
     if "plausibility" not in confirmed:
         limit = _limit(ctx)
         below = _lim(ctx, "confirm_below", None)
         for i, e in enumerate(events):
+            if f"plausibility@{i}" in confirmed:
+                continue  # this event's amount was confirmed already (1.17)
             if e["amount"] > limit or e.get("_doubt"):
                 return _clarify("plausibility", action, events, index=i, confirmed=confirmed, extra=extra or None)
             usual = _usual(e, ctx)
@@ -1142,8 +1153,17 @@ def _finalize(events: list[dict], action: str, ctx: dict, *, confirmed: set[str]
                 return res
             if below is not None and e["amount"] < below and not e.get("_cur") and e.get("kind") != "writeoff":
                 return _clarify("plausibility", action, events, index=i, confirmed=confirmed, extra=extra or None)
+    if many and ("confirm_entry" not in confirmed or any(c.startswith("confirm_entry@") for c in confirmed)):
+        # Several events: each over-payment is asked about on its own, for its own event (1.17). A yes to a
+        # confirmation of the whole utterance (hearsay, unsure, review) still covers them all.
+        done_at = {i for i in range(len(events)) if f"confirm_entry@{i}" in confirmed}
+        hit = _overpayment_at(events, ctx, _last_event(ctx) if action == "amend" else None, done_at)
+        if hit is not None:
+            i, over = hit
+            return _clarify("confirm_entry", action, events, confirmed=confirmed, index=i,
+                            extra=dict(extra, confirm=over), question=_confirm_question(over, events, i))
     if "confirm_entry" not in confirmed:
-        over = _overpayment(events, ctx, _last_event(ctx) if action == "amend" else None)
+        over = None if many else _overpayment(events, ctx, _last_event(ctx) if action == "amend" else None)
         if over is not None:
             return _clarify("confirm_entry", action, events, confirmed=confirmed,
                             extra=dict(extra, confirm=over), question=_confirm_question(over, events))
@@ -1183,11 +1203,29 @@ def _usual(e: dict, ctx: dict) -> int | None:
     return int(u) if _num(u) and u > 0 else None
 
 
+def _confirm_index(confirm: dict, events: list[dict]) -> int | None:
+    """The event a confirmation of one entry is about, in an utterance with several (1.17)."""
+    t = confirm.get("type")
+    if t in ("writeoff", "roundoff"):
+        return next((i for i, e in enumerate(events) if e.get("kind") == "writeoff" and "amount" in e), None)
+    if t in ("settle", "half"):
+        return next((i for i, e in enumerate(events) if e.get("kind") == "payment" and "amount" in e), None)
+    return None
+
+
 def _overpayment(events: list[dict], ctx: dict, replaced: dict | None = None) -> dict | None:
-    """A payment above the customer's balance plus this utterance's credits for them (H08). On an amend the entry
-    being replaced is left out (1.16)."""
-    for e in events:
-        if e.get("kind") != "payment" or e.get("new_customer") or e.get("_advance"):
+    hit = _overpayment_at(events, ctx, replaced)
+    return hit[1] if hit is not None else None
+
+
+def _overpayment_at(events: list[dict], ctx: dict, replaced: dict | None = None,
+                    skip: set[int] | None = None) -> tuple[int, dict] | None:
+    """The first payment above the customer's balance plus this utterance's credits for them (H08), with its index.
+    On an amend the entry being replaced is left out (1.16). Events in `skip` were confirmed already (1.17)."""
+    for i, e in enumerate(events):
+        if skip and i in skip:
+            continue
+        if e.get("kind") != "payment" or e.get("new_customer") or e.get("_advance") or "amount" not in e:
             continue
         c = _stored(e, ctx)
         bal = _balance_of(c)
@@ -1199,7 +1237,7 @@ def _overpayment(events: list[dict], ctx: dict, replaced: dict | None = None) ->
                                                                              e.get("customer", "")):
             bal += int(replaced.get("amount") or 0)
         if e["amount"] > bal + credits:
-            return {"type": "overpayment", "balance": bal}
+            return i, {"type": "overpayment", "balance": bal}
     return None
 
 
@@ -1880,6 +1918,11 @@ def _draft(toks: list[Tok], today: date, ctx: dict) -> _Draft:
         return d
     if "reminder" in kws:
         return _reminder(sig, ctx, d)
+    computed_shape = (len(amts) == 2 and bool(kws & {"bill", "discount"})) or (
+        len(amts) == 3 and all(isinstance(a.val, int) for a in amts) and amts[0].val - amts[1].val == amts[2].val > 0)
+    inst = None if computed_shape else _clause_instructions(marked, today, ctx, d)
+    if inst is not None:
+        return inst
     if len(amts) == 1 and _reduction(sig):
         return _writeoff_amount(sig, amts[0], today, ctx, d)
     if len(amts) == 1 and _is_amend_instruction(sig, toks):
@@ -2140,6 +2183,94 @@ def _reduction(sig: list[Tok]) -> bool:
     if "likh" in kws and "off" in kws:
         return True
     return fold("kam") in raws and bool(kws & {"kiya"})
+
+
+def _clause_instructions(marked: list[Tok], today: date, ctx: dict, d: _Draft) -> _Draft | None:
+    """Balance instructions and reductions in an utterance with other entries (1.17). Each stays in its own clause:
+    `poora` / `aadha` is a payment and `maaf` / `chhod do` / `round off` a write-off for that clause's customer,
+    with no amount (it is never worked out from the balance here, and never taken from another clause); a
+    reduction with its own amount is a write-off of that amount, confirmed. The other entries are kept as spoken.
+    None when the utterance is not of that shape."""
+    segs = _split_segments(marked)
+    if len(segs) < 2:
+        return None
+    kinds: list[str | None] = []
+    for seg in segs:
+        ssig = _sig(seg)
+        n_amt = sum(1 for t in ssig if t.cls == "amt")
+        if n_amt == 0:
+            st = _settle_type([t for t in ssig if t.kw != "balance"])  # "write off Mohan's balance"
+            kinds.append(("payment" if st in ("settle", "half") else "writeoff") if st else None)
+        elif n_amt == 1 and _reduction(ssig):
+            kinds.append("cut")
+        else:
+            kinds.append(None)
+    if not any(kinds) or not any(k is None and any(t.cls == "amt" for t in seg) for k, seg in zip(kinds, segs)):
+        return None
+    events: list[dict] = []
+    rest: list[list[Tok]] = []
+    complete = False
+    cut_confirm: dict | None = None
+
+    def flush() -> _Draft | None:
+        nonlocal rest, complete
+        if not rest:
+            return None
+        joined: list[Tok] = []
+        for k, seg in enumerate(rest):
+            if k:
+                joined.append(Tok(",", "sep"))
+            joined.extend(seg)
+        rest = []
+        sub = _entries(joined, today, ctx, d)
+        if sub.result is not None:
+            return sub
+        events.extend(sub.events or [])
+        complete = complete or sub.complete
+        return None
+
+    for kind, seg in zip(kinds, segs):
+        if kind is None:
+            rest.append(seg)
+            continue
+        stop = flush()
+        if stop is not None:
+            return stop
+        toks = [t for t in seg if t.cls not in ("fill", "aux", "cur")]
+        c = _analyse_clause(toks, ctx, today)
+        ev: dict[str, Any] = {"date": c.date or today.isoformat()}
+        if c.names and (c.names[0].key or c.names[0].tags):
+            ev["customer"] = c.names[0].key
+            if c.names[0].tags:
+                ev["tags"] = c.names[0].tags
+            for r in c.names:
+                d.spoken.update(_run_words(r))
+        elif events and events[-1].get("customer"):
+            # "..., uska baaki maaf kar do": the customer of the clause just spoken
+            ev["customer"] = events[-1]["customer"]
+            for key in ("customer_id", "tags"):
+                if events[-1].get(key) is not None:
+                    ev[key] = events[-1][key]
+        if kind == "cut":
+            ev["kind"] = "writeoff"
+            amt = next(t for t in _sig(seg) if t.cls == "amt")
+            if isinstance(amt.val, int) and amt.val > 0:
+                ev["amount"] = amt.val
+                if cut_confirm is None:
+                    cut_confirm = {"type": "writeoff", "amount": amt.val}
+                else:
+                    ev["_doubt"] = True  # a second reduction is confirmed on its own
+        else:
+            ev["kind"] = kind
+        events.append(ev)
+    stop = flush()
+    if stop is not None:
+        return stop
+    d.events = events
+    d.complete = complete
+    d.confirm = cut_confirm
+    d.result = None
+    return d
 
 
 def _writeoff_amount(sig: list[Tok], amt: Tok, today: date, ctx: dict, d: _Draft) -> _Draft:
@@ -2463,6 +2594,15 @@ def _entries(marked: list[Tok], today: date, ctx: dict, d: _Draft) -> _Draft:
         d.result = _rejected("invalid_number")
         return d
     if two_names:
+        with_amount = [e for e in events if "amount" in e]
+        if len(with_amount) == 1:
+            # One amount and two names it cannot be given to ("Ramesh ka khata, Sunita ko 1500 udhaar"): what was
+            # said is kept and only the customer is asked (1.17).
+            ev = {k: v for k, v in with_amount[0].items() if k not in ("customer", "customer_id", "tags")}
+            ev.setdefault("date", today.isoformat())
+            d.events = [ev]
+            d.result = _clarify("missing_customer", "append", [ev])
+            return d
         for e in events:
             e.pop("customer", None)
             e.pop("customer_id", None)
@@ -2962,7 +3102,8 @@ def _reask(pending: dict, ctx: dict) -> dict[str, Any]:
             question = (f"Sirf pichli entry hata sakta hoon: {_display(events[0].get('customer', ''))}, "
                         f"{_event_label(events[0])}. Hata doon?")
     elif reason == "confirm_entry" and isinstance(pending.get("confirm"), dict):
-        question = _confirm_question(pending["confirm"], events)
+        question = _confirm_question(pending["confirm"], events, pending.get("index")
+                                     if isinstance(pending.get("index"), int) else None)
     elif pending.get("name_only") and events:
         question = f"{_display(events[0].get('customer', ''))} ka kya likhun?"
     elif pending.get("quantity"):
@@ -3047,6 +3188,22 @@ def _answer_correction(sig, toks, utterance, today, ctx, pending, events) -> dic
     return None
 
 
+_ONE_EVENT_CONFIRMS = {"overpayment", "settle", "half", "writeoff", "roundoff"}
+
+
+def _event_index(pending: dict, events: list[dict]) -> int | None:
+    """pending.index when the pending result holds several events, else None."""
+    idx = pending.get("index")
+    if len(events) >= 2 and isinstance(idx, int) and 0 <= idx < len(events):
+        return idx
+    return None
+
+
+def _one_event_index(pending: dict, events: list[dict], ctype: Any) -> int | None:
+    """The event a confirmation is about when it concerns one entry of several (1.17), else None."""
+    return _event_index(pending, events) if ctype in _ONE_EVENT_CONFIRMS else None
+
+
 def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pending: dict) -> dict | None:
     reason = pending.get("reason")
     action = pending.get("action") or "append"
@@ -3068,9 +3225,9 @@ def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pen
     if reason in _FIELD_REASONS:
         confirmed.add(_FIELDS_ASKED)  # a multi-entry save after this answer is read back first (1.16)
 
-    def done(evs: list[dict]) -> dict:
-        return _finalize(evs, action, ctx, confirmed=confirmed, target=target, confirm=confirm, unsure=unsure,
-                         asked=True)
+    def done(evs: list[dict], keep_confirm: bool = True) -> dict:
+        return _finalize(evs, action, ctx, confirmed=confirmed, target=target,
+                         confirm=confirm if keep_confirm else None, unsure=unsure, asked=True)
 
     # "pakka?" said back is a question, not a yes.
     if utterance.strip().endswith("?") and _is_yes(sig):
@@ -3121,7 +3278,15 @@ def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pen
         ctype = (confirm or {}).get("type")
         likh_yes = bool(sig) and "likh" in _kws(sig) and all(
             t.cls == "aux" or t.kw in ("likh", "kiya", "yes", "ok", "filler", "hai") for t in sig)
+        one = _one_event_index(pending, events, ctype)
         if _is_yes(sig) or likh_yes:
+            if one is not None:
+                # One entry of several: the yes covers that entry only; the others, and any words still to be
+                # confirmed, are checked after it (1.17).
+                confirmed |= {f"confirm_entry@{one}", f"plausibility@{one}"}
+                if ctype != "overpayment":
+                    confirmed.add("confirm_entry")  # the utterance's own confirmation was answered
+                return done(events, keep_confirm=ctype != "overpayment")
             confirmed |= {"confirm_entry", "plausibility"}
             if ctype == "review" or len(events) < 2:
                 confirmed.add("review")
@@ -3137,6 +3302,14 @@ def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pen
             events[0]["amount"] = num
             confirmed |= {"confirm_entry", "plausibility", _FIELDS_ASKED}
             return done(events)
+        if isinstance(num, int) and one is not None and not _kind_conflict(sig, [events[one]]):
+            if num <= 0:
+                return _rejected("invalid_number")
+            events[one]["amount"] = num  # the replacement is not asked about again
+            confirmed |= {f"confirm_entry@{one}", f"plausibility@{one}", _FIELDS_ASKED}
+            if ctype != "overpayment":
+                confirmed.add("confirm_entry")
+            return done(events, keep_confirm=ctype != "overpayment")
 
     elif reason == "new_customer":
         # Answers (1.14): "naya" / "haan" make the new customer; "pehla" / "doosra" pick a candidate by position;
@@ -3189,8 +3362,10 @@ def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pen
             return done(events)
 
     elif reason == "plausibility":
+        p_index = _event_index(pending, events)
         if _is_yes(sig):
-            confirmed.add("plausibility")
+            # With several events the yes covers the amount that was asked about only (1.17).
+            confirmed.add(f"plausibility@{p_index}" if p_index is not None else "plausibility")
             return done(events)
         if _is_plain_no(sig) or _is_no(sig):
             return _rejected("cancelled")
@@ -3203,7 +3378,7 @@ def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pen
                 0 <= pending["index"] < len(events) else next(
                 (j for j, e in enumerate(events) if e.get("amount", 0) > limit), 0)
             events[i]["amount"] = num
-            confirmed |= {"plausibility", _FIELDS_ASKED}
+            confirmed |= {f"plausibility@{i}" if p_index is not None else "plausibility", _FIELDS_ASKED}
             return done(events)
 
     elif reason == "confusable_number":

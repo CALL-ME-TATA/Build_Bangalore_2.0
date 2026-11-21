@@ -303,9 +303,15 @@ def test_Y12_the_shop_paying_or_owing_the_customer_is_refused(shop, text):
     expect_reject(shop.say(text), "out_of_scope")
 
 
-def test_Y12_two_names_paying_asks(shop):
+def test_Y12_two_names_paying_asks_whose_account_and_saves_nothing(shop):
+    """CONTRACT 1.17: one amount, one direction, two names -> `missing_customer`, the payment of 500 kept."""
     book(shop)
-    expect_ask(shop.say("Ramesh and Sunita paid 500"), "missing_amount")
+    t = shop.say("Ramesh and Sunita paid 500")
+    expect_ask(t, "missing_customer")
+    events = (shop.state.pending or {}).get("events") or []
+    assert [(e.get("kind"), e.get("amount"), e.get("customer")) for e in events] == [("payment", 500, None)], (
+        f"the pending entry must keep the payment of 500 and name nobody: {shop.state.pending}")
+    assert not any(r["customer"] in ("ramesh", "sunita") for r in t.added)
 
 
 @pytest.mark.parametrize("text", ["Ramesh ne 500 ka maal lautaya", "Ramesh se 500 ka saaman liya"])

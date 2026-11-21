@@ -52,7 +52,7 @@ def test_direction_question_names_the_clause_that_has_no_direction(pipeline, par
 def test_confirm_and_plausibility_questions_use_the_indexed_event(pipeline, parser):
     events = [_ev("credit", "ramesh", 500, TODAY), _ev("credit", "sunita", 60000, TODAY)]
     parser.canned["q"] = question("plausibility", events, index=1)
-    assert pipeline.run_turn(st(), "q").reply_text == "₹60,000, pakka?"
+    assert pipeline.run_turn(st(), "q").reply_text == "Sunita ke ₹60,000, pakka?"  # several pending (1.17)
     c = {"type": "hearsay"}
     parser.canned["q"] = question("confirm_entry", [_ev("credit", "ramesh", 500, TODAY)], index=0, confirm=c,
                                   pending_extra={"confirm": c})

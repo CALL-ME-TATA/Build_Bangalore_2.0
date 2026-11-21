@@ -2,7 +2,7 @@
 
 KhataVaani is a voice ledger for kirana udhaar. The shopkeeper holds one button, speaks a sentence such as
 "Ramesh ka 340 udhaar, kal 200 diya tha", and hears a short confirmation. Interfaces are fixed in docs/CONTRACT.md
-(version 1.4). The edge cases the rules were written against are in docs/EDGE_CASES.md.
+(version 1.5). The edge cases the rules were written against are in docs/EDGE_CASES.md.
 
 ## What the judges score, and where the design answers it
 
@@ -69,7 +69,7 @@ flowchart LR
 6. Speak: audio chunks stream straight to the browser, which starts playing at the first chunk. A `timing` message
    reports each hop.
 
-## Pieces added in contract 1.2 to 1.4
+## Pieces added in contract 1.2 to 1.5
 
 - **Strict-mode gate.** The parser's last step. When an append or amend would be saved and the sentence holds a word
   outside the parser's vocabulary, the result becomes a `confirm_entry` question of type `unsure`. Every other rule
@@ -87,6 +87,9 @@ flowchart LR
   back in full before it is saved ("2 entry likhun: ..."). Dates, times and stated balances are never taken as
   amounts. A correction phrased as an instruction ("usko 430 kar do") and a reduction ("200 maaf kar do") are
   confirmed before they change the ledger.
+- **One question per entry (1.5).** With several entries pending, every question carries the index of the entry it
+  is about and names that entry's customer. Amount checks and over-payment checks run per entry, and the entries
+  are saved only when no entry is left to confirm.
 - **Idempotency.** A turn's `utt_id` becomes the utterance id and is written in the same transaction as its events. A
   repeated `utt_id` writes nothing and returns the first result with `duplicate: true`.
 - **Write-offs.** Stored as a payment with `adjustment='writeoff'`, so the balance arithmetic is unchanged; they are

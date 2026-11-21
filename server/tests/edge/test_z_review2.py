@@ -2,6 +2,8 @@
 run through the live session. Each case asserts what reaches the ledger and what is asked."""
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from .kit import expect_ask, expect_nothing_saved, expect_query, expect_reject, expect_saved
@@ -348,6 +350,8 @@ def test_Z12_a_question_survives_a_silent_turn_and_a_short_press(live_stack):
     n = live_stack.count()
     short = c.speak("Sunita ne 100 diye", audio_ms=300)
     assert short.result["action"] == "none" and live_stack.count() == n, short.result
+    time.sleep(0.6)  # let the mock hear the short press's frames before the next press; otherwise the mock may
+    # report speech for the old press after the new `start`, which is a race in the mock and not in the server
     silent = c.speak({"silence": True}, audio_ms=1200)
     r = silent.result
     assert r["status"] == "needs_clarification" and r.get("reason") == "plausibility", f"the question was lost: {r}"

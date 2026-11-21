@@ -223,7 +223,8 @@ CASES = [
 
     # --- Customers and guards ---
     ("cust-multiword", "Ramesh Kumar ka 200 udhaar", None, ok((C, "ramesh kumar", 200, D0))),
-    ("cust-two-names-missing-amount", "Ramesh, Suresh ko 200 diya", None, ask("missing_amount")),
+    # 1.17: two names and one amount keep the amount and ask whose account
+    ("cust-two-names-missing-amount", "Ramesh, Suresh ko 200 diya", None, ask("missing_customer")),
     ("cust-tag-only-roster", "chai wale ka 200 udhaar", {"customers": TWO_RAMESH},
      {"status": "ok", "events": [{"customer": "ramesh", "customer_id": "c1"}]}),
     ("cust-tag-only-no-roster", "chai wale ka 200 udhaar", None, ask("missing_customer")),

@@ -261,6 +261,14 @@ class Replier:
     def missing_customer(self) -> Reply:
         return Reply("Kiska khata?", "किसका खाता?")
 
+    def missing_amount_for(self, name: str) -> Reply:
+        """Missing amount when several entries are pending (1.17): says whose amount is asked."""
+        return Reply(f"{name} ke kitne rupaye?", f"{_name(name)} के कितने रुपये?")
+
+    def plausibility_for(self, name: str, amount: int) -> Reply:
+        """Plausibility when several entries are pending (1.17)."""
+        return Reply(f"{name} ke ₹{fmt_amount(amount)}, pakka?", f"{_name(name)} के {self.words(amount)} रुपये, पक्का?")
+
     def direction(self, name: str) -> Reply:
         return Reply(f"{name} ne diye, ya {name} ko udhaar?",
                      f"{_name(name)} ने दिए, या {_name(name)} को उधार?")
@@ -511,19 +519,26 @@ class Replier:
                 about = (ev["amount"], ev["kind"])
             return self.same_name(name, [c.get("tags", [None])[0] if c.get("tags") else "" for c in cands], about)
         if reason == "plausibility":
-            ev = self.target_event(result, events)
+            with_amount = [e for e in events if isinstance(e.get("amount"), int)]
+            idx = pending.get("index", result.get("index"))
+            if isinstance(idx, int) and not isinstance(idx, bool) and 0 <= idx < len(events):
+                ev = events[idx]
+            else:  # no index: the largest amount is the one in doubt
+                ev = max(with_amount, key=lambda e: e["amount"]) if with_amount else None
             if ev is not None and isinstance(ev.get("amount"), int):
+                if len(events) >= 2 and (ev.get("customer") or ev.get("customer_id")):
+                    return self.plausibility_for(name_of(ev), ev["amount"])
                 return self.plausibility(ev["amount"])
-            amounts = [e["amount"] for e in events if isinstance(e.get("amount"), int)]
-            if amounts:
-                return self.plausibility(max(amounts))
         if reason == "missing_amount":
             if result.get("quantity") or pending.get("quantity"):
                 return self.quantity()
             ev = self.target_event(result, events, lacking="amount")
-            if (len(events) == 1 and ev is not None and (ev.get("customer") or ev.get("customer_id"))
-                    and "kind" not in ev and "amount" not in ev and pending.get("action", "append") == "append"):
+            named = ev is not None and bool(ev.get("customer") or ev.get("customer_id"))
+            if (len(events) == 1 and named and "kind" not in ev and "amount" not in ev
+                    and pending.get("action", "append") == "append"):
                 return self.name_alone(name_of(ev))
+            if len(events) >= 2 and named:
+                return self.missing_amount_for(name_of(ev))
             return self.missing_amount()
         if reason == "missing_customer":
             return self.missing_customer()
@@ -771,6 +786,13 @@ class EnglishReplier(Replier):
 
     def missing_customer(self) -> Reply:
         return self._same("Whose account?")
+
+    def missing_amount_for(self, name: str) -> Reply:
+        return self._same(f"How many rupees for {name}?", f"How many rupees for {_name(name)}?")
+
+    def plausibility_for(self, name: str, amount: int) -> Reply:
+        return Reply(f"₹{fmt_amount(amount)} for {name}, are you sure?",
+                     f"{self._rs(amount)} for {_name(name)}, are you sure?")
 
     def direction(self, name: str) -> Reply:
         return self._same(f"Did {name} pay, or did {name} take credit?",

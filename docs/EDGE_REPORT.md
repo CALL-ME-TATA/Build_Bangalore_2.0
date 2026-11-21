@@ -2,7 +2,7 @@
 
 Written by `scripts/edge_report.py` from the tests in `server/tests/edge/`.
 
-251 cases: 226 pass, 0 fail, 25 manual, 0 without a test (742 tests run).
+262 cases: 237 pass, 0 fail, 25 manual, 0 without a test (770 tests run).
 
 ## A. Number parsing
 
@@ -364,6 +364,17 @@ Written by `scripts/edge_report.py` from the tests in `server/tests/edge/`.
 | Z15 | correction after a non-entry turn | pass |  |
 | Z16 | entry plus query | pass |  |
 | Z17 | problem-statement sentence and the demo script | pass |  |
+| Z18 | overpayment by the second customer | pass |  |
+| Z19 | two implausible amounts | pass |  |
+| Z20 | both customers overpay | pass |  |
+| Z21 | balance instruction stays in its clause | pass |  |
+| Z22 | reduction with its own amount | pass |  |
+| Z23 | one amount, two names | pass |  |
+| Z24 | stray word heard as a name | pass |  |
+| Z25 | silent, empty, long turns and expiry in a chain | pass |  |
+| Z26 | private mode in a chain | pass |  |
+| Z27 | wording with several entries pending | pass |  |
+| Z28 | single-entry regression guard | pass |  |
 
 ## Manual cases
 

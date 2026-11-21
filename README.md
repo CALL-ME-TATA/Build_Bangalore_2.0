@@ -97,10 +97,13 @@ or "nahi" settles it. Nothing is saved while a question is open.
 - **Instructions that change the ledger are confirmed.** "Usko 430 kar do" asks "Ramesh ki ₹340 udhaar entry ₹430
   kar doon?", and "Ramesh ka 200 maaf kar do" asks "Ramesh ke ₹200 maaf karun?". Nothing changes until the answer
   is yes.
+- **One question per entry.** In a sentence with several entries each doubtful entry gets its own question, with
+  its own customer and amount ("Mohan ke sirf ₹140 baaki hain. ₹200 hi likhun?"). One yes never covers a second
+  doubtful entry, and an instruction such as "baaki maaf kar do" stays with the customer it was said about.
 - **No double saves.** Each turn carries an id; if the page retries a turn, the server returns the first result and
   saves nothing twice.
 
-The rules are CONTRACT sections 1.14 to 1.16, 2.1, 3.3 and 5.1 in [docs/CONTRACT.md](docs/CONTRACT.md), written against
+The rules are CONTRACT sections 1.14 to 1.17, 2.1, 3.3 and 5.1 in [docs/CONTRACT.md](docs/CONTRACT.md), written against
 the edge-case list in [docs/EDGE_CASES.md](docs/EDGE_CASES.md) and the findings of two further reviews. Results: [docs/EDGE_REPORT.md](docs/EDGE_REPORT.md)
 (per case) and [docs/SCOREBOARD.md](docs/SCOREBOARD.md) (parser accuracy over the golden cases).
 
@@ -264,13 +267,13 @@ uses real credits.
 
 ## Tests
 
-Counts from a run on 2026-11-21 at 19:06 IST:
+Counts from a run on 2026-11-21 at 20:21 IST:
 
 | Suite | Tests |
 |---|---|
-| Parser and golden cases (`server/tests/nlu`, number round trips, fractions, oracle, `test_golden.py`) | 4,524 |
-| Server (`server/tests/app`) | 205 |
-| Edge cases (`server/tests/edge`): 226 of 251 cases (the list in docs/EDGE_CASES.md plus the review and unlisted-sentence groups), 25 left as manual checks | 742 |
+| Parser and golden cases (`server/tests/nlu`, number round trips, fractions, oracle, `test_golden.py`) | 4,577 |
+| Server (`server/tests/app`) | 223 |
+| Edge cases (`server/tests/edge`): 237 of 262 cases (the list in docs/EDGE_CASES.md plus the review and unlisted-sentence groups), 25 left as manual checks | 770 |
 | End-to-end and scoreboard (`server/tests/e2e`, `test_scoreboard.py`) | 103 |
 | Web app (`frontend/`, `npm test`) | 270 |
 

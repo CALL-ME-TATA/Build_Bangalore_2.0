@@ -77,7 +77,13 @@ EXTRA_SECTIONS = [("X", "Sentences nobody listed", [
     ("Z07", "purchase plus payment"), ("Z08", "answers that conflict with the pending kind"),
     ("Z09", "change karke"), ("Z10", "duplicate question takes yes or no"), ("Z11", "replayed utterance"),
     ("Z12", "question survives a silent turn"), ("Z13", "everyday speech keeps working"),
-    ("Z14", "natural answers"), ("Z15", "correction after a non-entry turn"), ("Z16", "entry plus query"), ("Z17", "problem-statement sentence and the demo script")])]
+    ("Z14", "natural answers"), ("Z15", "correction after a non-entry turn"), ("Z16", "entry plus query"), ("Z17", "problem-statement sentence and the demo script"),
+    ("Z18", "overpayment by the second customer"), ("Z19", "two implausible amounts"),
+    ("Z20", "both customers overpay"), ("Z21", "balance instruction stays in its clause"),
+    ("Z22", "reduction with its own amount"), ("Z23", "one amount, two names"),
+    ("Z24", "stray word heard as a name"), ("Z25", "silent, empty, long turns and expiry in a chain"),
+    ("Z26", "private mode in a chain"), ("Z27", "wording with several entries pending"),
+    ("Z28", "single-entry regression guard")])]
 
 
 def parse_cases_doc() -> list[tuple[str, str, list[tuple[str, str]]]]:

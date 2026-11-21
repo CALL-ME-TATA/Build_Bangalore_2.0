@@ -277,7 +277,9 @@ def test_name_words_in_a_row_are_one_name(utterance, customer):
 
 
 def test_comma_keeps_two_names_apart():
-    assert run("Ramesh, Suresh ko 200 diya")["reason"] == "missing_amount"
+    r = run("Ramesh, Suresh ko 200 diya")
+    assert r["reason"] == "missing_customer"  # 1.17: the amount is kept, only the customer is asked
+    assert r["pending"]["events"][0]["amount"] == 200
 
 
 @pytest.mark.parametrize("utterance", ["Mujhe Ramesh ne 100 diye", "Humne Ramesh ko 100 diye",
