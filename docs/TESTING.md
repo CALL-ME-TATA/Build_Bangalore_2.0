@@ -13,7 +13,7 @@ Run the Python suites from `server/` with `../.venv/Scripts/python` (Windows) or
 | Server: `tests/app` | 188 | Ledger rules, session protocol, replies, pipeline, and the Responsible AI tests of CONTRACT section 7 | `python -m pytest tests/app` |
 | Edge cases: `tests/edge` | 645 | One or more tests per case id of docs/EDGE_CASES.md (test names start with the id, for example `test_A11_...`). They cover 209 of the 234 listed cases; 25 are manual checks (below) | `python -m pytest tests/edge` |
 | End-to-end and scoreboard: `tests/e2e`, `tests/test_scoreboard.py` | 103 | Whole turns over `/ws/session` against the mock Gnani server, the audio replay script, and the scoreboard script | see below |
-| Web app: `frontend/` | see `npm test` | Pure logic of the web app (Vitest, no browser): money and dates, doubt-sheet answers, mic states, session reducer and protocol, audio conversion, the offline cache and typed queue, settings, insights, the demo script | `npm test` in `frontend/` |
+| Web app: `frontend/` | 262 | Pure logic of the web app (Vitest, no browser): money and dates, doubt-sheet answers, mic states, session reducer and protocol, audio conversion, the offline cache and typed queue, settings, insights, the demo script | `npm test` in `frontend/` |
 | Earlier client: `web/tests` | see `node --test web/tests` | Audio conversion and protocol handling of the no-build client | `node --test web/tests` from the repository root |
 
 `tests/e2e` has its own fixtures file and must be run on its own: `python -m pytest tests/e2e`. Run
@@ -45,7 +45,9 @@ Not built
 Need recordings (use `scripts/replay_audio.py`, with `--make-noisy` for noise)
 - M12: very low confidence. Gnani returns no confidence score, so there is nothing to test.
 - M13: a background speaker says a number. Push-to-talk, the readback and undo are the guard.
-- M14: noise such as traffic, a pressure cooker, a mixer, a crowd.
+- M14: noise such as traffic, a pressure cooker, a mixer, a crowd. Measured once with a synthetic voice and generated
+  white, pink and babble noise (README, "Noise test": 120 turns, 96 saved correctly, 24 asked, none saved wrongly);
+  real shop noise still needs recordings.
 - M15: whisper, shouting, clipping, a far microphone.
 - M16: accents, an older speaker, different voices.
 

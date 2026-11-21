@@ -77,13 +77,24 @@ or "nahi" settles it. Nothing is saved while a question is open.
 - **Not entries.** Promises and conditionals ("kal dunga", "agar ...") get "Yeh baad ki baat hai, abhi kuch nahi
   likha." Supplier payments, expenses, cash sales and quantities with no price are refused politely ("Wholesaler ko
   paanch hazaar diye" gets "Yeh udhaar entry nahi hai, isliye nahi likha."; "2 kilo chawal udhaar" gets "Kitne ka?").
-- **Carry-over.** "Aur 200" uses the last customer only for 60 seconds. A correction right after an undo is blocked, so
-  an older entry is never changed by mistake.
+- **Carry-over.** Only an explicit continuation ("Aur 200", "200 add kar do", "usne 200 diye") uses the last customer,
+  and only for 60 seconds. Any other amount with no name ("500 udhaar") is asked "Kiska khata?"; "wahi" picks the
+  last customer.
+- **Corrections and deletes.** "Nahi, 430" changes an entry only right after it was saved. After a question, a query
+  or an undo it is refused, so an older entry is never changed by mistake. A delete request that names an entry
+  ("Ramesh ka 340 udhaar hata do") never adds one: the app asks "Sirf pichli entry hata sakta hoon: ... Hata doon?"
+- **Answers.** An answer with an undo word ("haan hata do") is a no. "Ramesh nahi" never picks Ramesh, and two
+  amounts in an answer ("300 ya 400") are asked about again.
+- **Counts, questions and guesses.** "12 ande udhaar" is a count of goods, so it asks "Kitne ka?". A sentence that is
+  really a question or a guess ("Ramesh ne 500 diye kya", "... diya hoga") is confirmed before saving, and a negation
+  ("500 na diye", "did not pay") is refused.
+- **Misheard names.** A name written twice ("Ramish Ramesh") or split in two ("Diwa Kar" for Divakar) is matched to
+  the one existing customer it fits.
 - **No double saves.** Each turn carries an id; if the page retries a turn, the server returns the first result and
   saves nothing twice.
 
-The rules are CONTRACT sections 1.14, 2.1, 3.3 and 5.1 in [docs/CONTRACT.md](docs/CONTRACT.md), written against the
-edge-case list in [docs/EDGE_CASES.md](docs/EDGE_CASES.md). Results: [docs/EDGE_REPORT.md](docs/EDGE_REPORT.md)
+The rules are CONTRACT sections 1.14, 1.15, 2.1, 3.3 and 5.1 in [docs/CONTRACT.md](docs/CONTRACT.md), written against
+the edge-case list in [docs/EDGE_CASES.md](docs/EDGE_CASES.md) and the findings of a second review. Results: [docs/EDGE_REPORT.md](docs/EDGE_REPORT.md)
 (per case) and [docs/SCOREBOARD.md](docs/SCOREBOARD.md) (parser accuracy over the golden cases).
 
 ## Architecture
@@ -152,16 +163,37 @@ The wire protocol is in [docs/CONTRACT.md](docs/CONTRACT.md); design reasons are
 
 ## Measured latency
 
-Measured on 2026-11-21 by playing recorded audio through the real Gnani services (`scripts/replay_audio.py`).
+Measured on 2026-11-21 by sending recorded speech through a running server with the real Gnani services.
 
 | Hop | Result |
 |---|---|
-| End of speech to first reply audio | 0.34 to 0.66 s |
-| Button release to final transcript | 0.21 to 0.41 s |
+| End of speech to first reply audio | 0.24 to 0.70 s |
+| Button release to final transcript | 0.21 to 0.44 s |
 | First speech chunk (text-to-speech request to first audio) | 0.12 to 0.39 s |
 
-The target is a first reply within 2 s of the end of speech. These figures are from recorded speech on a laptop; see
-Limitations for what has not been measured.
+The target is a first reply within 2 s of the end of speech. In the 120-turn replay below the median was 0.24 to
+0.27 s and the 95th percentile at most 0.37 s on the clips where speech ran right up to the release. These figures
+are from recorded speech on a laptop; see Limitations for what has not been measured.
+
+## Noise test
+
+Twelve sentences (four customers; amounts from 125 to 2,500 with fractions, a code-mixed and an English sentence) were
+synthesised with Timbre v3.0 and replayed through the live pipeline with `scripts/replay_audio.py`: clean, and mixed
+with white, pink and babble noise at 20, 10 and 5 dB signal-to-noise ratio. 120 turns in all.
+
+| Condition | Saved correctly | Asked a question | Saved wrongly |
+|---|---|---|---|
+| Clean | 11 | 1 | 0 |
+| White noise, 20 / 10 / 5 dB | 12 / 11 / 11 | 0 / 1 / 1 | 0 |
+| Pink noise, 20 / 10 / 5 dB | 10 / 11 / 11 | 2 / 1 / 1 | 0 |
+| Babble (other voices), 20 / 10 / 5 dB | 8 / 9 / 2 | 4 / 3 / 10 | 0 |
+| All 120 turns | 96 | 24 | 0 |
+
+Every entry that was saved had the right customer, amount and direction. When the noise hid part of the sentence the
+app asked ("Kitne rupaye?", "Ramesh ne diye, ya Ramesh ko udhaar?") instead of guessing; five of the questions were
+the "₹2,500, pakka?" check for an amount far above that customer's usual. Babble at 5 dB (other voices almost as loud
+as the speaker) is where recognition breaks down: ten of twelve turns asked. The voice is synthetic and the noise is
+generated, so this shows how the pipeline fails, not how real shop noise sounds.
 
 ## Quick start
 
@@ -232,7 +264,7 @@ Counts from a run on 2026-11-21 at 17:42 IST:
 | Server (`server/tests/app`) | 188 |
 | Edge cases (`server/tests/edge`): 209 of 234 cases (the list in docs/EDGE_CASES.md plus the review and unlisted-sentence groups), 25 left as manual checks | 645 |
 | End-to-end and scoreboard (`server/tests/e2e`, `test_scoreboard.py`) | 103 |
-| Web app (`frontend/`) | see `npm test` |
+| Web app (`frontend/`, `npm test`) | 262 |
 
 From `server/` (use `../.venv/Scripts/python` on Windows or `../.venv/bin/python` elsewhere):
 
@@ -251,8 +283,9 @@ recordings. Details and the manual checks are in [docs/TESTING.md](docs/TESTING.
 
 ## Responsible AI
 
-- Disclosure: the first spoken reply of every session says "Main KhataVaani hoon, ek AI sahayak" (tested). The screen
-  also shows a permanent "AI sahayak" label.
+- Disclosure: the first spoken reply of every session says "Main KhataVaani hoon, ek AI sahayak" (tested). The
+  conversation on screen is labelled "KhataVaani · AI sahayak", and a page reload starts a new session, so the
+  disclosure is heard again.
 - Synthetic data only. `python -m app.admin seed` adds made-up customers for demos.
 - Names, tags, phones, transcripts and replies are encrypted with AES-256-GCM (tested: the database file has no
   plaintext names). Ids, amounts and dates stay plain so totals are SQL.
@@ -314,8 +347,9 @@ docs/                CONTRACT.md, ARCHITECTURE.md, TESTING.md, DEMO_SCRIPT.md, E
 - Hindi and English only. One language code is sent per session.
 - Speech needs a connection. The khata view is cached and typed sentences are queued while offline, but speaking
   does not work offline.
-- Not measured with real noise, accents, whispering or shouting. The latency figures above are from recorded speech.
-  `scripts/replay_audio.py` can run recordings of these through the server; that has not been done.
+- Not measured with real voices in real noise, nor with accents, whispering or shouting. The noise test above uses a
+  synthetic voice and generated noise. `scripts/replay_audio.py` can run real recordings through the server; that
+  has not been done.
 - The new web app's microphone handling has not yet been verified on a low-end phone.
 - Gnani returns no confidence score, so a number heard as another valid number is caught only by the spoken readback
   and "nahi".

@@ -2,7 +2,7 @@
 
 KhataVaani is a voice ledger for kirana udhaar. The shopkeeper holds one button, speaks a sentence such as
 "Ramesh ka 340 udhaar, kal 200 diya tha", and hears a short confirmation. Interfaces are fixed in docs/CONTRACT.md
-(version 1.2). The edge cases the rules were written against are in docs/EDGE_CASES.md.
+(version 1.3). The edge cases the rules were written against are in docs/EDGE_CASES.md.
 
 ## What the judges score, and where the design answers it
 
@@ -69,7 +69,7 @@ flowchart LR
 6. Speak: audio chunks stream straight to the browser, which starts playing at the first chunk. A `timing` message
    reports each hop.
 
-## Server pieces added in contract 1.2
+## Pieces added in contract 1.2 and 1.3
 
 - **Strict-mode gate.** The parser's last step. When an append or amend would be saved and the sentence holds a word
   outside the parser's vocabulary, the result becomes a `confirm_entry` question of type `unsure`. Every other rule
@@ -77,8 +77,11 @@ flowchart LR
 - **New-customer question.** An unknown name is asked about before an account is opened (`CONFIRM_NEW_CUSTOMER`), with up
   to two close existing names as choices.
 - **Question state with expiry.** An open question lives in the session and expires 60 seconds after it was asked. A
-  reconnect with `resume` drops it unless the page sends `keep_pending`. Carry-over ("aur 200") uses the previous turn
-  only within 60 seconds.
+  reconnect with `resume` drops it unless the page sends `keep_pending`. Carry-over across turns needs an explicit
+  continuation ("aur 200", "200 add kar do") within 60 seconds; any other amount with no name is asked "Kiska khata?".
+- **Answers and corrections (1.3).** An answer with an undo word is a no, a denied name is never picked, two amounts in
+  an answer are asked about again, and a correction is applied only right after the entry it corrects. A complete new
+  sentence spoken while a question is open is parsed fresh and the question is dropped.
 - **Idempotency.** A turn's `utt_id` becomes the utterance id and is written in the same transaction as its events. A
   repeated `utt_id` writes nothing and returns the first result with `duplicate: true`.
 - **Write-offs.** Stored as a payment with `adjustment='writeoff'`, so the balance arithmetic is unchanged; they are
@@ -118,7 +121,7 @@ their own turn ids, so a retry cannot save twice. Speech itself needs a connecti
 | Build step for the main web app | The app has several screens, an offline cache and a typed queue; the output is plain static files. `web/` stays as a no-build fallback |
 | Reminders through a prefilled WhatsApp link | The shopkeeper sends it, so nothing is sent without a person and only opted-in customers get one |
 | Gnani returns no confidence or alternatives | The guard relies on spoken readback, `nahi`, and confirmations of unusual amounts |
-| A bare "200 diya" after a named clause is a payment by that customer | This is exactly the example in the problem statement; the readback names the customer so a wrong reading is caught |
+| A bare "200 diya" after a named clause in the same sentence is a payment by that customer | This is exactly the example in the problem statement; the readback names the customer so a wrong reading is caught. As a new turn it is asked "Kiska khata?" |
 | Unknown names are asked about | Judges will use names the ledger has never seen. With `CONFIRM_NEW_CUSTOMER=0` the account is opened and the readback says "Naya khata" |
 
 ## Manual steps (they need the real API key, a phone and a network)

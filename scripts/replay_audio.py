@@ -335,6 +335,10 @@ async def replay(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Replies hold the rupee sign and Devanagari; a redirected Windows console would otherwise fail to encode them.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("manifest", nargs="?", help="manifest JSONL to replay")
     ap.add_argument("--url", default="ws://127.0.0.1:8000/ws/session")
