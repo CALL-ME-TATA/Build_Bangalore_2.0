@@ -156,6 +156,16 @@ def _edit1(a: str, b: str) -> bool:
     return False
 
 
+_DIGRAPHS = (("sh", "S"), ("ch", "C"), ("th", "T"), ("kh", "K"), ("gh", "G"), ("ph", "F"), ("bh", "B"),
+             ("dh", "D"), ("jh", "J"))
+
+
+def _units(consonants: str) -> str:
+    for pair, unit in _DIGRAPHS:
+        consonants = consonants.replace(pair, unit)
+    return consonants
+
+
 def close_name(spoken: str, stored: str) -> bool:
     """Not the same person, but close enough to ask about (1.14 E05): one consonant differs or is missing
     ("rakes" / "rakesh", "ramesh" / "rakesh"), or the spoken word is the end of the stored name and has three
@@ -175,6 +185,7 @@ def close_name(spoken: str, stored: str) -> bool:
             continue
         cx, ex = _skeleton(x)
         cy, ey = _skeleton(y)
+        cx, cy = _units(cx), _units(cy)  # "sh", "ch", "th" ... count as one consonant
         if ex == ey and _edit1(cx, cy):
             diffs += 1
         elif cx == cy and _edit1(x, y):

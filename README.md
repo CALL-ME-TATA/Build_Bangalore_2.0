@@ -224,11 +224,11 @@ uses real credits.
 
 ## Tests
 
-Counts from a run on 2026-11-21 at 17:26 IST:
+Counts from a run on 2026-11-21 at 17:42 IST:
 
 | Suite | Tests |
 |---|---|
-| Parser and golden cases (`server/tests/nlu`, number round trips, fractions, oracle, `test_golden.py`) | 4,288 |
+| Parser and golden cases (`server/tests/nlu`, number round trips, fractions, oracle, `test_golden.py`) | 4,308 |
 | Server (`server/tests/app`) | 188 |
 | Edge cases (`server/tests/edge`): 209 of 234 cases (the list in docs/EDGE_CASES.md plus the review and unlisted-sentence groups), 25 left as manual checks | 645 |
 | End-to-end and scoreboard (`server/tests/e2e`, `test_scoreboard.py`) | 103 |

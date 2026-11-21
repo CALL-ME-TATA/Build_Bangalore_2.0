@@ -876,11 +876,9 @@ def _resolve(key: str, tags: list[str], ctx: dict) -> tuple[str, Any]:
         if not cands:
             # Fuzzy match on a small set: names can only match when their first letters agree, or one starts with
             # a vowel (the 1.12 consonant rule ignores vowels).
-            head = nm.phonetic_key(key)[:1]
-            vowel = head in "aeiou"
-            cands = [c for c in customers
-                     if (vowel or c["name"][:1].lower() in (head, "a", "e", "i", "o", "u", "w" if head == "v" else head))
-                     and nm.same_person(c["name"], key)]
+            cands = [c for c in _same_head(customers, key) if nm.same_person(c["name"], key)]
+        if not cands:
+            cands = _repeated_or_split(key, customers)
     elif tags:
         cands = [c for c in customers if any(nm.tag_matches(t, ct) for t in tags for ct in (c.get("tags") or []))]
         if not cands:
@@ -917,6 +915,41 @@ def _close_customers(key: str, ctx: dict, limit: int = 2) -> list[dict]:
             if len(out) >= limit:
                 break
     return out
+
+
+def _same_head(customers: list[dict], key: str) -> list[dict]:
+    """Customers whose name could match `key` by the 1.12 rule: the first letters agree, or one starts with a vowel
+    (the consonant rule ignores vowels). Keeps the fuzzy scan small on a large roster."""
+    head = nm.phonetic_key(key)[:1]
+    if not head:
+        return []
+    vowel = head in "aeiou"
+    return [c for c in customers
+            if vowel or c["name"][:1].lower() in (head, "a", "e", "i", "o", "u", "w" if head == "v" else head)]
+
+
+def _repeated_or_split(key: str, customers: list[dict]) -> list[dict]:
+    """Two name-recovery rules for speech-to-text slips, each only when exactly one stored customer fits:
+    - a name said twice in two spellings ("Ramish Ramesh"): every spoken word is the same person as one and the
+      same stored customer; a real two-word name ("Ramesh Chopra") or two different customers never collapse;
+    - a name split or joined ("Diwa Kar" for stored "divakar", or "Divakar" for stored "diwa kar"): the spoken
+      words joined are the same person as the stored name joined."""
+    words = key.split()
+    if len(words) >= 2:
+        common: set | None = None
+        for w in words:
+            ids = {c["id"] for c in _same_head(customers, w) if nm.same_person(c["name"], w)}
+            common = ids if common is None else common & ids
+            if not common:
+                break
+        if common and len(common) == 1:
+            cid = next(iter(common))
+            return [c for c in customers if c["id"] == cid]
+    joined = key.replace(" ", "")
+    hits = [c for c in _same_head(customers, joined)
+            if c["name"].replace(" ", "") != c["name"] or " " in key
+            if nm.same_person(c["name"].replace(" ", ""), joined)]
+    return hits if len(hits) == 1 else []
 
 
 def _apply_fields(event: dict, fields: dict) -> None:

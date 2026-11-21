@@ -1,6 +1,6 @@
 # Testing plan
 
-Counts below are from a run on 2026-11-21 at 17:26 IST. Automated tests use the mock Gnani server and never call the
+Counts below are from a run on 2026-11-21 at 17:42 IST. Automated tests use the mock Gnani server and never call the
 real API.
 
 ## Suites
@@ -9,7 +9,7 @@ Run the Python suites from `server/` with `../.venv/Scripts/python` (Windows) or
 
 | Suite | Tests | What it proves | Run |
 |---|---|---|---|
-| Parser and golden: `tests/nlu`, `tests/oracle`, `tests/test_numbers_roundtrip.py`, `tests/test_fractions.py`, `tests/test_golden.py` | 4,288 | Every amount from 1 to 9,99,999 parses back from words, spelling variants and digits; fractions, English, Devanagari and digit forms; the parser rules of CONTRACT section 1; `eval/golden.seed.jsonl` and `eval/golden.jsonl` | `python -m pytest` |
+| Parser and golden: `tests/nlu`, `tests/oracle`, `tests/test_numbers_roundtrip.py`, `tests/test_fractions.py`, `tests/test_golden.py` | 4,308 | Every amount from 1 to 9,99,999 parses back from words, spelling variants and digits; fractions, English, Devanagari and digit forms; the parser rules of CONTRACT section 1; `eval/golden.seed.jsonl` and `eval/golden.jsonl` | `python -m pytest` |
 | Server: `tests/app` | 188 | Ledger rules, session protocol, replies, pipeline, and the Responsible AI tests of CONTRACT section 7 | `python -m pytest tests/app` |
 | Edge cases: `tests/edge` | 645 | One or more tests per case id of docs/EDGE_CASES.md (test names start with the id, for example `test_A11_...`). They cover 209 of the 234 listed cases; 25 are manual checks (below) | `python -m pytest tests/edge` |
 | End-to-end and scoreboard: `tests/e2e`, `tests/test_scoreboard.py` | 103 | Whole turns over `/ws/session` against the mock Gnani server, the audio replay script, and the scoreboard script | see below |
