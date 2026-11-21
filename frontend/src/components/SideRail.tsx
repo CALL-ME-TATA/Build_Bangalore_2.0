@@ -6,6 +6,7 @@ import { labels } from '../i18n';
 import { useLang } from '../hooks/useLabels';
 import { useSettings } from '../state/settings';
 import { StatusBadge } from './StatusBadge';
+import { LanguageSwitcher } from './LanguageSwitcher';
 import { NAV_ITEMS } from './nav';
 
 export function SideRail({ className = '' }: { className?: string }) {
@@ -30,6 +31,7 @@ export function SideRail({ className = '' }: { className?: string }) {
           ))}
         </ul>
       </nav>
+      <LanguageSwitcher />
       <div className="mt-auto flex flex-col gap-1 px-3">
         <p className="text-small font-semibold text-ink">{shopName}</p>
         <StatusBadge variant="inline" />

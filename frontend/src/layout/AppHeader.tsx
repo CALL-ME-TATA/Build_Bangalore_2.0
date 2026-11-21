@@ -4,6 +4,7 @@
 import { Lock } from 'lucide-react';
 import { useLabels } from '../hooks/useLabels';
 import { useSettings } from '../state/settings';
+import { LanguageSwitcher } from '../components/LanguageSwitcher';
 import { StatusBadge } from '../components/StatusBadge';
 
 export function AppHeader({ className = '' }: { className?: string }) {
@@ -21,6 +22,7 @@ export function AppHeader({ className = '' }: { className?: string }) {
         </div>
         <StatusBadge variant="pill" />
       </div>
+      <LanguageSwitcher className="mx-3 mb-2" />
     </header>
   );
 }

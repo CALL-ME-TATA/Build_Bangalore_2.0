@@ -37,3 +37,16 @@ def test_a_translation_that_changes_a_number_is_not_spoken(ledger, settings, par
 
 def test_numbers_helper():
     assert numbers("₹1,250 aur 340") == numbers("340 ... ₹1250")
+
+
+def test_native_digits_count_as_the_same_number():
+    from app.regional import ascii_digits
+    assert numbers("रमेशसाठी ६०० रुपयांचा क्रेडिट") == numbers("Added ₹600 credit")
+    assert ascii_digits("₹೧,೨೫೦ · ௩௪௦") == "₹1,250 · 340"
+
+
+def test_marathi_reply_with_devanagari_digits_is_spoken_in_marathi(ledger, settings, parser):
+    p, s = make(ledger, settings, parser, lambda text: text.replace("340", "३४०").replace("Ramesh", "रमेश"))
+    p.run_turn(s, "ರಮೇಶ್ 340 ಸಾಲ")
+    t = p.run_turn(s, "ಹೌದು")
+    assert "रमेश" in t.reply_text and "340" in t.reply_text, t.reply_text  # translated, digits shown as 340

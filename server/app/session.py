@@ -261,7 +261,15 @@ class Session:
             state = self._ensure_state()
             if "private" in data:
                 state.private = bool(data.get("private"))
-            await self._send({"type": "settings", "private": state.private})
+            lang = self._hello_lang(data) if "lang" in data else None
+            if lang and lang != state.lang:
+                # Language switched mid-conversation: replies follow it, and speech-to-text is reopened in it.
+                state.lang = lang
+                if self.stt is not None:
+                    await self.stt.close()
+                    self.stt = None
+            await self._send({"type": "settings", "private": state.private,
+                              "lang": state.lang if state.lang in ("hi", "en") else "en"})
         elif kind == "cancel":
             recording = self._collecting
             await self._interrupt()

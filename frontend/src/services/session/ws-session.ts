@@ -284,6 +284,12 @@ export function createWsSession(host: SessionHost): SessionService {
       if (client) client.lang = voiceLang() ?? next;
     },
 
+    setSpoken(code) {
+      if (!client) return; // not started: the start step sends it in hello
+      client.lang = code; // later reconnects keep it
+      client.send({ type: 'settings', lang: code });
+    },
+
     setVoiceSpeed(rate) {
       speed = rate;
       player?.setSpeed(rate);

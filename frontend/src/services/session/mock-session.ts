@@ -288,6 +288,10 @@ export function createMockSession(host: SessionHost, options: MockSessionOptions
       brain.lang = next;
     },
 
+    setSpoken(code) {
+      if (code === 'hi' || code === 'en') this.setLang(code); // the scripted mock speaks Hindi and English only
+    },
+
     setVoiceSpeed(rate) {
       speed = rate;
     },

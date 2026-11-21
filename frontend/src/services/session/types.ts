@@ -205,6 +205,8 @@ export interface SessionService {
   beep(): void;
   /** Language for later reconnects (hello.lang). */
   setLang(lang: Lang): void;
+  /** Change the spoken language inside a session (hi, en, kn, mr, ta): a `settings` message with `lang`. */
+  setSpoken(code: string): void;
   /** Playback speed of the spoken reply, 0.8 to 1.25. */
   setVoiceSpeed(rate: number): void;
   close(): void;

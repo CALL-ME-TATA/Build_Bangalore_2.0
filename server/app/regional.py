@@ -38,8 +38,16 @@ def is_regional(lang: str | None) -> bool:
     return lang in REGIONAL
 
 
+# Marathi often writes amounts in Devanagari digits (६००), Kannada and Tamil sometimes in their own.
+_NATIVE_DIGITS = str.maketrans("०१२३४५६७८९೦೧೨೩೪೫೬೭೮೯௦௧௨௩௪௫௬௭௮௯", "0123456789" * 3)
+
+
+def ascii_digits(text: str) -> str:
+    return text.translate(_NATIVE_DIGITS)
+
+
 def numbers(text: str) -> list[str]:
-    return sorted(re.findall(r"\d[\d,]*", text.replace(",", "")))
+    return sorted(re.findall(r"\d+", ascii_digits(text).replace(",", "")))
 
 
 class Regional:
@@ -67,7 +75,8 @@ def _cached(chat_id: int, text: str, lang: str) -> str | None:  # keyed by the R
     if inst is None:
         return None
     try:
-        out = inst.chat(FROM_ENGLISH.format(name=REGIONAL[lang][1]), text, 300).strip()
+        # Native digits become 0-9, so "६००" is checked (and shown) as 600.
+        out = ascii_digits(inst.chat(FROM_ENGLISH.format(name=REGIONAL[lang][1]), text, 300).strip())
     except Exception as exc:
         log.warning("regional reply failed: %s", type(exc).__name__)
         return None

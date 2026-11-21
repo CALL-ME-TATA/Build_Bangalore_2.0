@@ -47,6 +47,7 @@ export function createSessionService(host: SessionHost, mode: SessionMode = sess
       impl?.setPrivate(on);
     },
     beep: () => impl?.beep(),
+    setSpoken: (code) => impl?.setSpoken(code),
     setLang(next) {
       lang = next;
       impl?.setLang(next);

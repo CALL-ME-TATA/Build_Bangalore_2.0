@@ -11,6 +11,7 @@ import type { MicStatus, SendOptions, SessionAction } from '../services/session/
 import { useSettings } from './settings';
 import { micLevel } from './level';
 import { initialState, reduce, type SessionState } from './session-reducer';
+import { setVoiceLang, type VoiceLang } from '../services/session/voice';
 import { queueOffline, shouldQueueText, startOutbox } from '../services/offline/status';
 
 export * from './session-reducer';
@@ -61,6 +62,19 @@ export const session: typeof service = {
     else service.sendText(text, opts);
   },
 };
+
+/**
+ * Switch the spoken language, also in the middle of a conversation: Hindi or English change the page labels
+ * too; Kannada, Marathi and Tamil keep English labels (the server translates speech and replies).
+ */
+export function switchLanguage(code: 'hi' | 'en' | VoiceLang): void {
+  const regional = code === 'kn' || code === 'mr' || code === 'ta';
+  setVoiceLang(regional ? code : null);
+  const ui: Lang = code === 'hi' ? 'hi' : 'en';
+  useSettings.getState().set('language', ui);
+  useSession.getState().dispatch({ type: 'set_lang', lang: ui });
+  session.setSpoken(code);
+}
 
 /**
  * Start step: must run inside a user gesture (tap) so audio can play. Opens the session in `lang`,
