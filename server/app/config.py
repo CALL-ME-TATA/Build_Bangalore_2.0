@@ -14,7 +14,8 @@ STT_MODEL = "prisma-v3.0"
 TTS_MODEL = "timbre-v3.0"
 
 _SECRET_FIELDS = {"gnani_api_key", "ledger_key", "admin_token", "access_code", "llm_api_key",
-                  "google_client_secret", "session_secret"}
+                  "google_client_secret", "session_secret", "supabase_secret_key", "supabase_access_token",
+                  "twilio_auth_token"}
 
 
 def _flag(value: str) -> bool:
@@ -65,6 +66,17 @@ class Settings:
     # Kafka notifications (app/notify.py). Empty = off.
     kafka_bootstrap: str = ""
     kafka_topic: str = "khata.notifications"
+    # Copy of every shop's ledger in a Supabase project (app/cloud_sync.py). URL and key both set = on.
+    supabase_url: str = ""
+    supabase_secret_key: str = ""  # SUPABASE_SECRET_KEY (sb_secret_...), else the legacy SUPABASE_SERVICE_ROLE_KEY
+    supabase_access_token: str = ""  # optional personal access token: lets the server create missing tables
+    cloud_sync_interval_s: int = 300
+    # Reminder SMS through Twilio, sent by the Kafka consumer (app/sms.py, app/notify_worker.py).
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_messaging_service_sid: str = ""  # MG...; or TWILIO_FROM, a Twilio phone number
+    twilio_from: str = ""
+    twilio_allowed_to: str = ""  # numbers that may receive an SMS, comma separated; "*" = anyone; empty = nobody
     host: str = "127.0.0.1"
     port: int = 8000
 
@@ -116,6 +128,15 @@ class Settings:
             public_url=get("PUBLIC_URL").rstrip("/"),
             kafka_bootstrap=get("KAFKA_BOOTSTRAP"),
             kafka_topic=get("KAFKA_TOPIC", cls.kafka_topic),
+            supabase_url=get("SUPABASE_URL").rstrip("/"),
+            supabase_secret_key=get("SUPABASE_SECRET_KEY") or get("SUPABASE_SERVICE_ROLE_KEY"),
+            supabase_access_token=get("SUPABASE_ACCESS_TOKEN"),
+            cloud_sync_interval_s=max(30, int(get("CLOUD_SYNC_INTERVAL_S", str(cls.cloud_sync_interval_s)))),
+            twilio_account_sid=get("TWILIO_ACCOUNT_SID"),
+            twilio_auth_token=get("TWILIO_AUTH_TOKEN"),
+            twilio_messaging_service_sid=get("TWILIO_MESSAGING_SERVICE_SID"),
+            twilio_from=get("TWILIO_FROM"),
+            twilio_allowed_to=get("TWILIO_ALLOWED_TO"),
             host=get("HOST", cls.host),
             port=int(get("PORT", str(cls.port))),
         )
@@ -133,6 +154,16 @@ class Settings:
     @property
     def auth_enabled(self) -> bool:
         return bool(self.google_client_id and self.google_client_secret)
+
+    @property
+    def cloud_sync_enabled(self) -> bool:
+        return bool(self.supabase_url and self.supabase_secret_key)
+
+    @property
+    def sms_enabled(self) -> bool:
+        """Twilio is configured. SMS go out only through the Kafka consumer, so Kafka must be on as well."""
+        return bool(self.twilio_account_sid and self.twilio_auth_token
+                    and (self.twilio_messaging_service_sid or self.twilio_from))
 
     @property
     def session_key_path(self) -> Path:

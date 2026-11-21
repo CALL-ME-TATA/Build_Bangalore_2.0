@@ -979,3 +979,36 @@ class Ledger:
     def mark_reminder_sent(self, reminder_id: int) -> None:
         with self._lock:
             self.conn.execute("UPDATE reminder_outbox SET status='sent' WHERE id=?", (reminder_id,))
+
+    def reminder_to_send(self, reminder_id: int, now: datetime, message_fn: Callable[[str, int, str], str],
+                         gap_s: float = 24 * 3600) -> tuple[dict | None, str]:
+        """What to send for one queued reminder, rebuilt from the current balance: ({"customer_id","phone","lang",
+        "message","amount"}, "ok"), or (None, reason) when it must not go out: `quiet_hours`, `gone` (the row was
+        removed, e.g. by an opt-out), `already_sent`, `not_opted_in`, `nothing_due`, `no_phone`, or `sent_recently`
+        (this customer was sent a reminder less than `gap_s` ago)."""
+        if in_quiet_hours(now):
+            return None, "quiet_hours"
+        with self._lock:
+            self._cache = None  # another process (the server) may have changed customers since this one loaded them
+            self._stats = None
+            row = self.conn.execute("SELECT * FROM reminder_outbox WHERE id=?", (reminder_id,)).fetchone()
+            if row is None:
+                return None, "gone"
+            if row["status"] != "pending":
+                return None, "already_sent"
+            c = self._customers().get(row["customer_id"])
+            if c is None or not c["reminders_opt_in"]:
+                return None, "not_opted_in"
+            bal = self.balance(c["id"])
+            if bal <= 0:
+                return None, "nothing_due"
+            if not c.get("phone"):
+                return None, "no_phone"
+            since = (now - timedelta(seconds=gap_s)).isoformat()
+            recent = self.conn.execute("SELECT 1 FROM reminder_outbox WHERE customer_id=? AND status='sent' AND ts>=?",
+                                       (c["id"], since)).fetchone()
+            if recent:
+                return None, "sent_recently"
+            lang = c.get("lang") or "hi"
+            return {"customer_id": c["id"], "phone": c["phone"], "lang": lang, "amount": bal,
+                    "message": message_fn(c["display"], bal, lang)}, "ok"

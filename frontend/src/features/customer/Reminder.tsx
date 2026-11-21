@@ -14,7 +14,7 @@ import { Button } from '../../components/Button';
 import { Switch } from '../../components/Switch';
 import { Amount } from '../../components/Amount';
 import { announce } from '../../components/LiveRegion';
-import { getReminders, queueReminders, setReminderOptIn, type Customer, type Reminder } from '../../services/api';
+import { getReminders, remindCustomer, setReminderOptIn, type Customer, type Reminder } from '../../services/api';
 import { queryKeys } from '../../services/query';
 import { toast } from '../../lib/toast';
 import type { Lang } from '../../i18n';
@@ -24,7 +24,7 @@ import { customerLabels } from './labels';
 import { normalizePhone, reminderAvailability, reminderFor, safeWaLink } from './logic';
 
 type Outcome =
-  | { kind: 'ready'; reminder: Reminder }
+  | { kind: 'ready'; reminder: Reminder; sms?: boolean } // sms: the server also sends it by SMS
   | { kind: 'none' }
   | { kind: 'quiet' } // outside sending hours: the server queues nothing until 09:00
   | { kind: 'failed' }
@@ -42,15 +42,17 @@ export function ReminderPanel({ customer, lang, synthetic }: { customer: Custome
   const send = async () => {
     setBusy(true);
     try {
-      const queue = synthetic ? null : await queueReminders();
+      // Only this customer is reminded (never every opted-in customer at once).
+      const queue = synthetic ? null : await remindCustomer(customer.id);
       if (queue?.quietHours) {
         setOutcome({ kind: 'quiet' });
         announce(C.reminderQuietHours);
         return;
       }
       const found = synthetic ? null : reminderFor(await getReminders(), customer.id);
-      setOutcome(found ? { kind: 'ready', reminder: found } : { kind: 'none' });
-      announce(found ? C.reminderReady : C.reminderNone);
+      const sms = Boolean(queue?.sms && found?.wa_link);
+      setOutcome(found ? { kind: 'ready', reminder: found, sms } : { kind: 'none' });
+      announce(found ? (sms ? `${C.reminderReady}. ${C.reminderSms}` : C.reminderReady) : C.reminderNone);
     } catch {
       setOutcome({ kind: 'failed' });
       announce(C.reminderFailed, 'assertive');
@@ -162,6 +164,7 @@ function ReminderOutcome({ outcome, lang, customerId, saving, onSaving, onReady 
       <blockquote className="max-w-prose text-body text-ink-2" lang="hi-Latn">
         {r.message}
       </blockquote>
+      {outcome.sms ? <p className="text-meta text-ink">{C.reminderSms}</p> : null}
       {link ? (
         <a
           href={link}

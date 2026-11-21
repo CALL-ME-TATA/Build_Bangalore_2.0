@@ -34,6 +34,7 @@ from .llm import client_from_settings as llm_client_from_settings
 from .llm import from_settings as from_llm_settings
 from .regional import Regional
 from .notify import from_settings as notifier_from_settings
+from .cloud_sync import CloudSync, from_settings as cloud_from_settings
 from .logsafe import NoDebug, StripQuery
 from .pipeline import ParseFn, Pipeline, default_parse, warm_default_parser
 from .replies import NumberToWords, Replier, fixed_replies
@@ -126,6 +127,14 @@ def origin_allowed(origin: str | None, host: str | None, extra: str = "") -> boo
     return origin.rstrip("/").lower() in allowed
 
 
+async def cloud_loop(cloud: CloudSync, cfg: Settings) -> None:
+    """Push every shop's ledger to Supabase now and then every CLOUD_SYNC_INTERVAL_S (CONTRACT 3.7). The push runs
+    in a worker thread, so turns are never held up; it never raises."""
+    while True:
+        await asyncio.to_thread(cloud.sync_all, cfg.db_path, cfg.data_dir)
+        await asyncio.sleep(cfg.cloud_sync_interval_s)
+
+
 def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None,
                number_to_words: NumberToWords | None = None, stt_factory=None, tts_factory=None,
                now=None, web_dir: Path | None = None) -> FastAPI:
@@ -162,11 +171,21 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
         warm_task = None
         if prewarm_enabled(cfg):
             warm_task = asyncio.create_task(prewarm(cfg, pipeline.replies, holder["ctx"].tts_factory))
+        cloud = cloud_from_settings(cfg)  # copy of every shop's ledger in Supabase (app/cloud_sync.py)
+        cloud_task = asyncio.create_task(cloud_loop(cloud, cfg)) if cloud is not None else None
+        app.state.cloud = cloud
         try:
             yield
         finally:
             if warm_task is not None and not warm_task.done():
                 warm_task.cancel()
+            if cloud_task is not None:
+                cloud_task.cancel()
+                try:
+                    await cloud_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                cloud.close()
             ledger.close()
             with tenants_lock:
                 for t in tenants.values():
@@ -330,6 +349,23 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
         for item in c.ledger.reminder_items(queued):  # same event as a reminder queued by voice
             c.pipeline.notify({"type": "reminder_queued", **item})
         return {"queued": queued, "quiet_hours": False}
+
+    @app.post("/api/customers/{customer_id}/remind", dependencies=guarded)
+    async def remind_one(request: Request, customer_id: str):
+        """Queue a reminder for this one customer (the "Send reminder" button). With Twilio and Kafka on, the
+        consumer sends it as an SMS after its own checks (CONTRACT 3.8). `sms` says whether that will be tried."""
+        c = ctx(request)
+        now = c.pipeline.now()
+        sms = cfg.sms_enabled and bool(cfg.kafka_bootstrap)
+        if c.ledger.find_customer(customer_id=customer_id) is None:
+            raise HTTPException(404, "unknown_customer")
+        if in_quiet_hours(now):
+            return {"queued": None, "quiet_hours": True, "sms": sms}
+        rid = c.ledger.queue_reminder(customer_id, now)
+        if rid is not None:  # also when it was pending already: the consumer sends it if it has not gone yet
+            for item in c.ledger.reminder_items([rid]):
+                c.pipeline.notify({"type": "reminder_queued", **item})
+        return {"queued": rid, "quiet_hours": False, "sms": sms}
 
     @app.post("/api/customers/{customer_id}/reminders", dependencies=guarded)
     async def set_opt_in(request: Request, customer_id: str, body: dict):

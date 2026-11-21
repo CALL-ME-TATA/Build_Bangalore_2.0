@@ -118,6 +118,19 @@ export async function queueReminders(): Promise<{ queued: number[]; quietHours: 
   return { queued: d.queued ?? [], quietHours: d.quiet_hours === true };
 }
 
+/**
+ * POST /api/customers/{id}/remind: queue a reminder for this one customer. `sms`: the server sends it as an SMS too
+ * (Twilio through Kafka) after its own checks. `quietHours`: outside 09:00 to 20:00 nothing is queued.
+ */
+export async function remindCustomer(customerId: string): Promise<{ queued: number | null; quietHours: boolean; sms: boolean }> {
+  if (isMock()) return { queued: null, quietHours: false, sms: false };
+  const d = await request<{ queued?: number | null; quiet_hours?: boolean; sms?: boolean }>(
+    `/api/customers/${encodeURIComponent(customerId)}/remind`,
+    { method: 'POST' },
+  );
+  return { queued: d.queued ?? null, quietHours: d.quiet_hours === true, sms: d.sms === true };
+}
+
 /** POST /api/customers/{id}/reminders: set the reminder opt-in (and optionally the phone number). */
 export async function setReminderOptIn(customerId: string, optIn: boolean, phone?: string | null): Promise<void> {
   if (isMock()) {

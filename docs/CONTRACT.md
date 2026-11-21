@@ -1138,6 +1138,47 @@ The page (`frontend/`)
   disabled with a short reason. After a change every khata query is refreshed.
 - Every visible text has a Hinglish and an English form. No pressure or threat language.
 
+### 3.7 Copy of every shop's ledger in Supabase (v1.9)
+
+Code: `server/app/cloud_sync.py`, tables: `server/app/supabase_schema.sql`. On when `SUPABASE_URL` and
+`SUPABASE_SECRET_KEY` (or the legacy `SUPABASE_SERVICE_ROLE_KEY`) are set.
+- Once at start-up and then every `CLOUD_SYNC_INTERVAL_S` (default 300, at least 30) the server pushes each shop's
+  SQLite ledger to the Supabase project through its REST API, in a worker thread, through a read-only connection
+  per ledger. A turn is never held up and the app's write lock is never taken.
+- Shops: `default` (the ledger at `LEDGER_DB`) and every signed-in account's ledger under `data/users/<id>/`, the
+  folder name being the account's hashed id. No email address is sent.
+- Tables `khata_customers`, `khata_events`, `khata_utterances`, `khata_consent_log`, `khata_confusions`, each keyed
+  by `shop` plus the local key. Rows are copied as stored: `ident` and `body` are the AES-256-GCM blobs in base64
+  (same nonce, ciphertext and associated data, so the shop can restore them with its key); amounts, kinds and dates
+  are plain. Row level security is on with no policy, so only the secret key reaches them.
+- events, utterances and consent_log are append-only and pushed from where the cloud copy ends (largest id; for
+  utterances, latest `ts`, sending the rows at that time again). customers and confusions change in place and are
+  upserted in full. The reminder outbox is not copied. The copy is one-way: nothing is read back.
+- Missing tables: with `SUPABASE_ACCESS_TOKEN` (a personal access token) the server runs supabase_schema.sql
+  through the Supabase Management API; without it the log says to run that file once in the SQL editor.
+- Failures are logged with the HTTP status and error code and retried at the next round. The key, the token and
+  row contents are never logged. `python -m app.cloud_sync` (from `server/`) pushes once by hand.
+- The secret key goes in the `apikey` header only; a legacy `eyJ...` key also as `Authorization: Bearer`.
+
+### 3.8 Reminder SMS through Twilio (v1.10)
+
+Code: `server/app/sms.py` (Twilio Messages API over httpx, no Twilio library) and `server/app/notify_worker.py` (the
+Kafka consumer). On when `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` and `TWILIO_MESSAGING_SERVICE_SID` (or
+`TWILIO_FROM`) are set and Kafka is on.
+- The "Send reminder" button calls `POST /api/customers/{id}/remind`: it queues a reminder for that one customer
+  only (opted in, owing, inside 09:00 to 20:00) and publishes `reminder_queued`. Answer `{"queued": id|null,
+  "quiet_hours": bool, "sms": bool}`; 404 `unknown_customer`. `POST /api/reminders/queue` (every opted-in customer
+  at once) is not used by the page. A reminder asked for by voice publishes the same event after its yes.
+- The consumer receives ids only. It opens that shop's ledger on the same machine and sends nothing unless: it is
+  09:00 to 20:00 shop time; the outbox row is still pending (not sent before, not removed by an opt-out); the
+  customer is still opted in, still owes and has a phone number; no reminder was sent to them in the last 24 hours;
+  and the number (E.164, `+91` for a 10-digit mobile) is in `TWILIO_ALLOWED_TO` (`*` = any number, empty = none).
+- The text is the reminder message of 5.1 (`Namaste {name} ji, aapke khate mein ₹{amount} baaki hain. Suvidha se
+  bhej dijiye. Dhanyavaad.`, English when the customer's language is English), from the current balance.
+- After Twilio accepts it the row is marked `sent`, so a repeated event sends nothing; a refusal (HTTP status and
+  Twilio code in the log) leaves it pending, and the next press sends it.
+- Phone numbers, names, message text and the auth token never go into Kafka or the log.
+
 ## 4. Gnani API Platform (`server/app/gnani/`), verified against docs.gnani.ai
 
 Use the `websockets` library directly. The SDK is not used: it cannot send `commit`.
