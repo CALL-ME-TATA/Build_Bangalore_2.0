@@ -235,9 +235,11 @@ class Replier:
             labels.append(second)
         return ", ".join(labels[:-1]) + f" {or_word} " + labels[-1]
 
-    def same_name(self, name: str, tags: list[str], about: tuple[int, str] | None = None) -> Reply:
+    def same_name(self, name: str, tags: list[str], about: tuple[int, str] | None = None,
+                  by_name: bool = False) -> Reply:
         """`tags`: the first tag of each candidate, in order ("" for none). `about` = (amount, kind) of the clause,
-        named when the sentence holds more than one entry."""
+        named when the sentence holds more than one entry. `by_name`: the labels are full names ("Diwakar",
+        "Diwakar Sharma"), asked as "Aap kaunse Diwakar ki baat kar rahe hain: Diwakar ya Diwakar Sharma?"."""
         at = as_ = ""
         if about:
             kt, ks = self._kind(about[1])
@@ -245,7 +247,17 @@ class Replier:
         shown = self._choices(tags, "ya", self.NO_TAG, "doosre wale")
         spoken_tags = [_name(t) if t else "" for t in tags]
         said = self._choices(spoken_tags, "या", "बिना टैग वाले", "दूसरे वाले")
+        if by_name:
+            shown_all = ", ".join(t for t in tags[:3] if t) + " ya koi aur"
+            said_all = ", ".join(_name(t) for t in tags[:3] if t) + " या कोई और"
+            return Reply(f"Aap kaunse {name}{at} ki baat kar rahe hain: {shown_all}?",
+                         f"आप कौन से {_name(name)}{as_} की बात कर रहे हैं: {said_all}?")
         return Reply(f"Kaunse {name}{at}: {shown}?", f"कौन से {_name(name)}{as_}: {said}?")
+
+    def new_tag(self, name: str) -> Reply:
+        """After "koi aur": a label for the new customer with an existing name."""
+        return Reply(f"Naye {name} ki pehchaan boliye, jaise 'chai wale' ya 'gali 3 wale'.",
+                     f"नए {_name(name)} की पहचान बोलिए, जैसे चाय वाले या गली तीन वाले।")
 
     def which_entry(self, a: dict, b: dict, names: tuple[str, str] | None = None) -> Reply:
         """`names`: the customers of the two entries, said when the entries alone cannot be told apart."""
@@ -537,13 +549,24 @@ class Replier:
         cands = result.get("candidates") or pending.get("candidates") or []
         if reason == "confusable_number" and len(cands) >= 2:
             return self.confusable(int(cands[0]), int(cands[1]))
+        if reason == "new_tag" and events:
+            i = pending.get("index", result.get("index"))
+            ev = events[i] if isinstance(i, int) and not isinstance(i, bool) and 0 <= i < len(events) else events[0]
+            return self.new_tag(display_name(str(ev.get("customer") or "")))
         if reason == "same_name" and cands:
             name = display_name(str(cands[0].get("name", "")))
             about = None
             ev = self.target_event(result, events, lacking="customer_id")
             if len(events) > 1 and ev is not None and isinstance(ev.get("amount"), int) and ev.get("kind"):
                 about = (ev["amount"], ev["kind"])
-            return self.same_name(name, [c.get("tags", [None])[0] if c.get("tags") else "" for c in cands], about)
+            labels = [c.get("tags", [None])[0] if c.get("tags") else "" for c in cands]
+            by_name = len({str(c.get("name", "")) for c in cands}) > 1
+            if by_name:
+                # "Diwakar" and "Diwakar Sharma": the names tell them apart ("Kaunse Diwakar: Diwakar ya Diwakar Sharma?")
+                shortest = min(cands, key=lambda c: len(str(c.get("name", "")).split()))
+                name = display_name(str(shortest.get("name", "")))
+                labels = [display_name(str(c.get("name", ""))) + (f" ({t})" if t else "") for c, t in zip(cands, labels)]
+            return self.same_name(name, labels, about, by_name=by_name)
         if reason == "plausibility":
             with_amount = [e for e in events if isinstance(e.get("amount"), int)]
             idx = pending.get("index", result.get("index"))
@@ -783,13 +806,21 @@ class EnglishReplier(Replier):
     def confusable(self, a: int, b: int) -> Reply:
         return Reply(f"₹{fmt_amount(a)} or ₹{fmt_amount(b)}?", f"{self._rs(a)} or {self._rs(b)}?")
 
-    def same_name(self, name: str, tags: list[str], about: tuple[int, str] | None = None) -> Reply:
+    def same_name(self, name: str, tags: list[str], about: tuple[int, str] | None = None,
+                  by_name: bool = False) -> Reply:
         at = as_ = ""
         if about:
             k = KIND_EN.get(about[1], about[1])
             at, as_ = f", for ₹{fmt_amount(about[0])} {k}", f", for {self._rs(about[0])} {k}"
         choices = self._choices(tags, "or", "the one with no tag", "the second one")
+        if by_name:
+            listed = ", ".join(t for t in tags[:3] if t) + " or someone else"
+            return Reply(f"Which {name} do you mean{at}: {listed}?", f"Which {_name(name)} do you mean{as_}: {listed}?")
         return Reply(f"Which {name}{at}: {choices}?", f"Which {_name(name)}{as_}: {choices}?")
+
+    def new_tag(self, name: str) -> Reply:
+        text = f"How should I tell the new {name} apart? Say a label, like 'tea stall' or 'lane 3'."
+        return Reply(text, text)
 
     def which_entry(self, a: dict, b: dict, names: tuple[str, str] | None = None) -> Reply:
         ak, bk = KIND_EN.get(a["kind"], a["kind"]), KIND_EN.get(b["kind"], b["kind"])

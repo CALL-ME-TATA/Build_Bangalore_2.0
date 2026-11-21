@@ -13,7 +13,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 STT_MODEL = "prisma-v3.0"
 TTS_MODEL = "timbre-v3.0"
 
-_SECRET_FIELDS = {"gnani_api_key", "ledger_key", "admin_token", "access_code"}
+_SECRET_FIELDS = {"gnani_api_key", "ledger_key", "admin_token", "access_code", "llm_api_key",
+                  "google_client_secret", "session_secret"}
 
 
 def _flag(value: str) -> bool:
@@ -49,6 +50,18 @@ class Settings:
     noise_confirm_db: float = 14.0  # 0 switches the confirmation off
     admin_token: str = ""
     access_code: str = ""
+    # LLM fallback for sentences the rules refuse (app/llm.py). Empty key = rules only.
+    llm_api_key: str = ""
+    llm_base_url: str = "https://api.groq.com/openai/v1"
+    llm_model: str = "qwen/qwen3.8-27b"  # fastest correct on Groq, 2026-11-21: ~140 ms median
+    llm_reasoning_effort: str = "none"  # sent as reasoning_effort; empty = not sent (hosts without it)
+    llm_timeout_s: float = 1.5
+    # Google sign-in (app/auth.py). Both set = sign-in required for the khata; ALLOWED_EMAILS lists who gets in.
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    allowed_emails: str = ""
+    session_secret: str = ""  # empty: a random key in data/session.key
+    public_url: str = ""  # e.g. https://my-tunnel.trycloudflare.com when behind a tunnel; empty = the request's host
     host: str = "127.0.0.1"
     port: int = 8000
 
@@ -88,6 +101,16 @@ class Settings:
             noise_confirm_db=float(get("NOISE_CONFIRM_DB", str(cls.noise_confirm_db))),
             admin_token=get("ADMIN_TOKEN"),
             access_code=get("ACCESS_CODE"),
+            llm_api_key=get("LLM_API_KEY"),
+            llm_base_url=get("LLM_BASE_URL", cls.llm_base_url),
+            llm_model=get("LLM_MODEL", cls.llm_model),
+            llm_reasoning_effort=e.get("LLM_REASONING_EFFORT", cls.llm_reasoning_effort),
+            llm_timeout_s=float(get("LLM_TIMEOUT_S", str(cls.llm_timeout_s))),
+            google_client_id=get("GOOGLE_CLIENT_ID"),
+            google_client_secret=get("GOOGLE_CLIENT_SECRET"),
+            allowed_emails=get("ALLOWED_EMAILS"),
+            session_secret=get("SESSION_SECRET"),
+            public_url=get("PUBLIC_URL").rstrip("/"),
             host=get("HOST", cls.host),
             port=int(get("PORT", str(cls.port))),
         )
@@ -101,6 +124,14 @@ class Settings:
     @property
     def data_dir(self) -> Path:
         return self.db_path.parent
+
+    @property
+    def auth_enabled(self) -> bool:
+        return bool(self.google_client_id and self.google_client_secret)
+
+    @property
+    def session_key_path(self) -> Path:
+        return self.data_dir / "session.key"
 
     @property
     def key_path(self) -> Path:

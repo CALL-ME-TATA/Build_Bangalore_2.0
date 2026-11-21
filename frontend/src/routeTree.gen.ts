@@ -14,6 +14,7 @@ import { Route as DemoRouteImport } from './routes/demo'
 import { Route as HisaabRouteImport } from './routes/hisaab'
 import { Route as KhataRouteImport } from './routes/khata'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as KhataIndexRouteImport } from './routes/khata.index'
 import { Route as KhataIdRouteImport } from './routes/khata.$id'
 
@@ -42,6 +43,11 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const WelcomeRoute = WelcomeRouteImport.update({
+  id: '/welcome',
+  path: '/welcome',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const KhataIndexRoute = KhataIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -59,6 +65,7 @@ export interface FileRoutesByFullPath {
   '/hisaab': typeof HisaabRoute
   '/khata': typeof KhataRouteWithChildren
   '/settings': typeof SettingsRoute
+  '/welcome': typeof WelcomeRoute
   '/khata/$id': typeof KhataIdRoute
   '/khata/': typeof KhataIndexRoute
 }
@@ -67,6 +74,7 @@ export interface FileRoutesByTo {
   '/demo': typeof DemoRoute
   '/hisaab': typeof HisaabRoute
   '/settings': typeof SettingsRoute
+  '/welcome': typeof WelcomeRoute
   '/khata/$id': typeof KhataIdRoute
   '/khata': typeof KhataIndexRoute
 }
@@ -77,6 +85,7 @@ export interface FileRoutesById {
   '/hisaab': typeof HisaabRoute
   '/khata': typeof KhataRouteWithChildren
   '/settings': typeof SettingsRoute
+  '/welcome': typeof WelcomeRoute
   '/khata/$id': typeof KhataIdRoute
   '/khata/': typeof KhataIndexRoute
 }
@@ -88,10 +97,18 @@ export interface FileRouteTypes {
     | '/hisaab'
     | '/khata'
     | '/settings'
+    | '/welcome'
     | '/khata/$id'
     | '/khata/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/demo' | '/hisaab' | '/settings' | '/khata/$id' | '/khata'
+  to:
+    | '/'
+    | '/demo'
+    | '/hisaab'
+    | '/settings'
+    | '/welcome'
+    | '/khata/$id'
+    | '/khata'
   id:
     | '__root__'
     | '/'
@@ -99,6 +116,7 @@ export interface FileRouteTypes {
     | '/hisaab'
     | '/khata'
     | '/settings'
+    | '/welcome'
     | '/khata/$id'
     | '/khata/'
   fileRoutesById: FileRoutesById
@@ -109,6 +127,7 @@ export interface RootRouteChildren {
   HisaabRoute: typeof HisaabRoute
   KhataRoute: typeof KhataRouteWithChildren
   SettingsRoute: typeof SettingsRoute
+  WelcomeRoute: typeof WelcomeRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -148,6 +167,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/welcome': {
+      id: '/welcome'
+      path: '/welcome'
+      fullPath: '/welcome'
+      preLoaderRoute: typeof WelcomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/khata/': {
       id: '/khata/'
       path: '/'
@@ -183,6 +209,7 @@ const rootRouteChildren: RootRouteChildren = {
   HisaabRoute: HisaabRoute,
   KhataRoute: KhataRouteWithChildren,
   SettingsRoute: SettingsRoute,
+  WelcomeRoute: WelcomeRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

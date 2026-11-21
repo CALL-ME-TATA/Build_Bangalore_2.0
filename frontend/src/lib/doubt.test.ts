@@ -233,3 +233,27 @@ describe('contract 3.4 / 1.18 sheet points', () => {
     expect(s.options.some((o) => o.amount != null)).toBe(false);
   });
 });
+
+describe('either/or questions keep their answers', () => {
+  test('ambiguous_direction with a confirmation attached still offers udhaar / jama, not Haan / Nahi', () => {
+    const spec = doubtSpec({ reason: 'ambiguous_direction', question: 'Ramesh ne diye, ya Ramesh ko udhaar?',
+      confirm: { type: 'unsure', words: ['phone'] }, lang: 'hi' } as Parameters<typeof doubtSpec>[0]);
+    expect(spec.options.map((o) => o.answer)).toEqual(['udhaar', 'jama']);
+  });
+
+  test('two customers whose names differ are offered by name', () => {
+    const spec = doubtSpec({ reason: 'same_name', question: 'Aap kaunse Diwakar ki baat kar rahe hain: Diwakar, Diwakar Sharma ya koi aur?',
+      candidates: [{ id: 5, display: 'Diwakar', tags: [] }, { id: 6, display: 'Diwakar Sharma', tags: [] }],
+      lang: 'hi' } as Parameters<typeof doubtSpec>[0]);
+    expect(spec.options.map((o) => [o.label, o.answer])).toEqual([['Diwakar', 'pehla'], ['Diwakar Sharma', 'doosra'], ['Koi aur', 'koi aur']]);
+  });
+});
+
+describe('label for a second customer with the same name', () => {
+  test('new_tag: type or say the label, or one tap for none', () => {
+    const spec = doubtSpec({ reason: 'new_tag', question: "Naye Diwakar ki pehchaan boliye, jaise 'chai wale' ya 'gali 3 wale'.",
+      lang: 'hi' } as Parameters<typeof doubtSpec>[0]);
+    expect(spec.typeBox).toBe(true);
+    expect(spec.options.map((o) => [o.label, o.answer])).toEqual([['Bina pehchaan', 'bina pehchaan']]);
+  });
+});

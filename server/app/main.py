@@ -8,23 +8,27 @@ import asyncio
 import hmac
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from dataclasses import fields
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import auth as auth_mod
 from .admin import purge as purge_files
 from .config import Settings, get_settings
 from .crypto import Crypto, load_key
 from .gnani.stt import SttClient
-from .gnani.tts import TtsClient, _memory_cache as tts_memory_cache
+from .gnani.tts import TtsClient
+from .gnani.tts import _memory_cache as tts_memory_cache
 from .ledger import Ledger, in_quiet_hours
+from .llm import from_settings as from_llm_settings
 from .logsafe import NoDebug, StripQuery
-from .pipeline import ParseFn, Pipeline, warm_default_parser
+from .pipeline import ParseFn, Pipeline, default_parse, warm_default_parser
 from .replies import NumberToWords, Replier, fixed_replies
 from .session import AppContext, Session
 
@@ -133,8 +137,9 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
             for f in fields(cfg):
                 setattr(cfg, f.name, getattr(fresh, f.name))
         ledger = Ledger(cfg.db_path, Crypto(load_key(cfg.ledger_key, cfg.key_path)))
-        pipeline = Pipeline(ledger, cfg, parse=parse, number_to_words=number_to_words, now=now)
-        if pipeline.uses_default_parser:
+        llm_parse = from_llm_settings(default_parse, cfg) if parse is None else None
+        pipeline = Pipeline(ledger, cfg, parse=parse or llm_parse, number_to_words=number_to_words, now=now)
+        if parse is None:
             warm_default_parser()  # the vocabulary loads lazily; load it before the first turn
         holder["ctx"] = AppContext(
             settings=cfg, ledger=ledger, pipeline=pipeline,
@@ -156,8 +161,23 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
     def ctx() -> AppContext:
         return holder["ctx"]
 
+    def session_secret() -> bytes:
+        if "secret" not in holder:
+            holder["secret"] = auth_mod.load_secret(cfg.session_secret, cfg.session_key_path)  # type: ignore[assignment]
+        return holder["secret"]  # type: ignore[return-value]
+
+    def signed_in(cookies) -> dict | None:
+        return auth_mod.verify(cookies.get(auth_mod.SESSION_COOKIE), session_secret())
+
+    def redirect_uri(request: Request) -> str:
+        base = cfg.public_url or str(request.base_url).rstrip("/")
+        return base + auth_mod.CALLBACK_PATH
+
     async def require_access(request: Request, x_access_code: str | None = Header(default=None)) -> None:
-        """When ACCESS_CODE is set, REST data endpoints need it as X-Access-Code or ?code=."""
+        """With Google sign-in on, REST data endpoints need a signed-in, allowed user. When ACCESS_CODE is set,
+        they also need it as X-Access-Code or ?code=."""
+        if cfg.auth_enabled and signed_in(request.cookies) is None:
+            raise HTTPException(401, "sign in required")
         if not cfg.access_code:
             return
         given = x_access_code or request.query_params.get("code") or ""
@@ -165,6 +185,56 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
             raise HTTPException(401, "access code required")
 
     guarded = [Depends(require_access)]
+
+    # ---- Google sign-in ---------------------------------------------------------------------------------------
+    @app.get("/api/auth/me")
+    async def auth_me(request: Request):
+        user = signed_in(request.cookies) if cfg.auth_enabled else None
+        return {"enabled": cfg.auth_enabled,
+                "user": {k: user.get(k) for k in ("email", "name", "picture")} if user else None}
+
+    @app.get("/api/auth/google/login")
+    async def auth_login(request: Request):
+        if not cfg.auth_enabled:
+            raise HTTPException(404, "Google sign-in is not configured")
+        state = auth_mod.new_state()
+        resp = RedirectResponse(auth_mod.login_url(cfg.google_client_id, redirect_uri(request), state), 302)
+        resp.set_cookie(auth_mod.STATE_COOKIE, auth_mod.sign({"s": state, "exp": time.time() + auth_mod.STATE_TTL_S},
+                                                             session_secret()),
+                        max_age=auth_mod.STATE_TTL_S, httponly=True, samesite="lax",
+                        secure=redirect_uri(request).startswith("https://"), path="/api/auth")
+        return resp
+
+    @app.get("/api/auth/google/callback")
+    async def auth_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+        if not cfg.auth_enabled:
+            raise HTTPException(404, "Google sign-in is not configured")
+        saved = auth_mod.verify(request.cookies.get(auth_mod.STATE_COOKIE), session_secret())
+        if error or not code or not saved or not hmac.compare_digest(str(saved.get("s", "")), state):
+            return RedirectResponse("/#/welcome?login=failed", 302)  # cancelled, replayed or forged
+        try:
+            info = await auth_mod.exchange(code, redirect_uri(request), cfg.google_client_id, cfg.google_client_secret)
+        except Exception as exc:  # Google unreachable or the code was rejected
+            log.warning("google sign-in failed: %s", type(exc).__name__)
+            return RedirectResponse("/#/welcome?login=failed", 302)
+        email = str(info.get("email") or "")
+        if not info.get("email_verified") or not auth_mod.allowed(email, cfg.allowed_emails):
+            resp = RedirectResponse("/#/welcome?login=not_allowed", 302)
+            resp.delete_cookie(auth_mod.STATE_COOKIE, path="/api/auth")
+            return resp
+        user = {"email": email, "name": str(info.get("name") or ""), "picture": str(info.get("picture") or ""),
+                "exp": time.time() + auth_mod.SESSION_TTL_S}
+        resp = RedirectResponse("/#/", 302)
+        resp.set_cookie(auth_mod.SESSION_COOKIE, auth_mod.sign(user, session_secret()), max_age=auth_mod.SESSION_TTL_S,
+                        httponly=True, samesite="lax", secure=redirect_uri(request).startswith("https://"), path="/")
+        resp.delete_cookie(auth_mod.STATE_COOKIE, path="/api/auth")
+        return resp
+
+    @app.post("/api/auth/logout")
+    async def auth_logout():
+        resp = JSONResponse({"ok": True})
+        resp.delete_cookie(auth_mod.SESSION_COOKIE, path="/")
+        return resp
 
     @app.get("/api/health")
     async def health():
@@ -258,6 +328,9 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
     async def ws_session(ws: WebSocket):
         if not origin_allowed(ws.headers.get("origin"), ws.headers.get("host"), cfg.allowed_origins):
             await ws.close(code=1008)  # refused before the handshake completes (HTTP 403)
+            return
+        if cfg.auth_enabled and signed_in(ws.cookies) is None:
+            await ws.close(code=1008)  # not signed in with an allowed Google account
             return
         await Session(ws, ctx()).run()
 

@@ -104,6 +104,11 @@ DUPLICATE_S = 30
 # A number followed by one of these is a quantity, never an amount (1.14 A16, A24, H03).
 _MEASURE_FOLDS = frozenset(fold(romanise_word(w) if is_devanagari(w) else w) for w in normalise(
     _KEYWORDS["measure"] + " " + " ".join(_PV["measure_extra"])).split())
+# A number before one of these counts runs, wickets or distance: never an amount, and the sentence is not about
+# the khata at all ("250 run bane", "4 wicket liye"), so it is refused rather than asked "Kitne ka?".
+_NONMONEY_FOLDS = frozenset(fold(w) for w in "run runs wicket wickets over overs goal goals km kilometer kilometre".split())
+# A number right after one of these is an identifier ("phone number 98", "class 8", "flat 302"): ignored like a time.
+_ID_BEFORE_FOLDS = frozenset(fold(w) for w in "number no class flat room plot sector gali ward house mobile".split())
 # Out of scope (1.14 I01 to I03): supplier, expense and cash-sale words.
 _OOS_WORDS = frozenset(fold(w) for w in _PV["out_of_scope_words"])
 _OOS_PHRASES = [tuple(fold(w) for w in p.split()) for p in _PV["out_of_scope_phrases"]]
@@ -598,8 +603,12 @@ def _mark(toks: list[Tok], keep_fillers: bool = False) -> list[Tok]:
             nxt = out[j] if j < n else None
             prev_tok = out[i - 1] if i > 0 else None
             near_cur = (prev_tok is not None and prev_tok.cls == "cur") or (nxt is not None and nxt.cls == "cur")
-            if nxt is not None and (fold(nxt.rom) in _MEASURE_FOLDS or (fold(nxt.rom) in _GOODS_FOLDS
-                                                                        and not near_cur)):
+            if prev_tok is not None and fold(prev_tok.rom) in _ID_BEFORE_FOLDS and not near_cur:
+                res.append(Tok(" ".join(x.raw for x in span), "fill"))  # "number 98", "class 8": an identifier
+                i = j
+                continue
+            if nxt is not None and (fold(nxt.rom) in _MEASURE_FOLDS or fold(nxt.rom) in _NONMONEY_FOLDS
+                                    or (fold(nxt.rom) in _GOODS_FOLDS and not near_cur)):
                 # "2 kilo", "teen customer", "12 ande": a quantity or a count of goods, never an amount
                 res.append(Tok(" ".join(x.raw for x in span) + " " + nxt.raw, "qty"))
                 i = j
@@ -878,6 +887,8 @@ def _question(reason: str, events: list[dict], candidates: Any, index: int | Non
     if (reason == "confusable_number" and isinstance(candidates, list) and len(candidates) >= 2
             and all(isinstance(c, int) for c in candidates[:2])):
         return f"{_rupees(candidates[0])} ya {_rupees(candidates[1])}?"
+    if reason == "new_tag":
+        return f"Naye {_display(ev.get('customer', ''))} ki pehchaan boliye, jaise 'chai wale' ya 'gali 3 wale'."
     if reason == "new_customer":
         name = _display(ev.get("customer", ""))
         if isinstance(candidates, list) and candidates and all(isinstance(c, dict) for c in candidates):
@@ -888,6 +899,10 @@ def _question(reason: str, events: list[dict], candidates: Any, index: int | Non
             and all(isinstance(c, dict) for c in candidates)):
         name = _display(str(candidates[0].get("name") or ""))
         labels = [", ".join(str(t) for t in (c.get("tags") or [])) or "bina tag wale" for c in candidates]
+        if len({str(c.get("name") or "") for c in candidates}) > 1:  # "Diwakar ya Diwakar Sharma"
+            name = _display(min((str(c.get("name") or "") for c in candidates), key=lambda n: len(n.split())))
+            labels = [_display(str(c.get("name") or "")) for c in candidates]
+            return f"Aap kaunse {name} ki baat kar rahe hain: {', '.join(labels[:3])} ya koi aur?"
         if len(labels) > 2:
             joined = ", ".join(labels[:-1]) + " ya " + labels[-1]
         else:
@@ -1026,6 +1041,11 @@ def _resolve(key: str, tags: list[str], ctx: dict) -> tuple[str, Any]:
         cands = [c for c in customers if key in [str(a).lower() for a in (c.get("aliases") or [])]]
         if not cands:
             cands = [c for c in customers if c["name"] == key]
+            if cands:
+                # "Diwakar" is also the start of "Diwakar Sharma": both are asked about, never the short one silently
+                words = key.split()
+                cands += [c for c in customers if c not in cands
+                          and c["name"].split()[:len(words)] == words and len(c["name"].split()) > len(words)]
         if not cands:
             # Fuzzy match on a small set: names can only match when their first letters agree, or one starts with
             # a vowel (the 1.12 consonant rule ignores vowels).
@@ -1057,6 +1077,42 @@ def _resolve(key: str, tags: list[str], ctx: dict) -> tuple[str, Any]:
     if len(cands) == 1:
         return "ok", {"customer": cands[0]["name"], "customer_id": cands[0]["id"]}
     return "same_name", [_cand(c) for c in cands]
+
+
+_OTHER_WORDS = frozenset(fold(w) for w in "naya nayi naye new other alag".split())
+_OTHER_AFTER_KOI = frozenset(fold(w) for w in "aur doosra dusra doosre dusre alag".split())
+
+
+def _wants_other(sig: list[Tok]) -> bool:
+    """"koi aur", "koi doosra", "naya", "new one": none of the listed customers. A "nahi" anywhere cancels it."""
+    if any(t.cls == "kw" and t.kw in ("neg", "galat") for t in sig):
+        return False
+    words = [fold(w) for t in sig if t.cls != "sep"
+             for w in (romanise_word(t.raw, False) if is_devanagari(t.raw) else t.raw).lower().split()]
+    if set(words) & _OTHER_WORDS:
+        return True
+    return any(w == fold("koi") and k + 1 < len(words) and words[k + 1] in _OTHER_AFTER_KOI
+               for k, w in enumerate(words))
+
+
+def _pick_by_name(sig: list[Tok], cands: list[dict]) -> dict | None:
+    """Answer to "Kaunse Diwakar: Diwakar ya Diwakar Sharma?" by name. "Diwakar Sharma" or "Sharma ji" picks the
+    long name, "Diwakar" or "sirf Diwakar" the short one; after "nahi" only the words that follow count."""
+    content = [t for t in sig if t.cls != "sep"]
+    negs = [k for k, t in enumerate(content) if t.cls == "kw" and t.kw in ("neg", "galat")]
+    if negs:
+        content = content[negs[-1] + 1:]
+    spoken = {fold(w) for t in content
+              for w in (romanise_word(t.raw, False) if is_devanagari(t.raw) else t.raw).lower().split()}
+    names = {id(c): [fold(w) for w in str(c.get("name") or "").lower().split()] for c in cands}
+    full = [c for c in cands if names[id(c)] and set(names[id(c)]) <= spoken]
+    if full:
+        longest = max(len(names[id(c)]) for c in full)
+        top = [c for c in full if len(names[id(c)]) == longest]
+        return top[0] if len(top) == 1 else None
+    common = set.intersection(*(set(n) for n in names.values())) if names else set()
+    hits = [c for c in cands if (set(names[id(c)]) - common) & spoken]
+    return hits[0] if len(hits) == 1 else None
 
 
 def _close_customers(key: str, ctx: dict, limit: int = 2) -> list[dict]:
@@ -2178,6 +2234,9 @@ def _draft(toks: list[Tok], today: date, ctx: dict) -> _Draft:
         settle = _settle_type(sig)
         if settle:
             return _settle(marked, sig, settle, today, ctx, d)
+        if any(fold(t.raw.split()[-1]) in _NONMONEY_FOLDS for t in qtys):
+            d.result = _rejected("not_ledger")  # "250 run bane", "4 wicket liye": a score, not a khata entry
+            return d
         if qtys:
             clause = _analyse_clause(marked, ctx, today)
             if clause.names and clause.names[0].key and clause.kind == "credit":
@@ -3503,6 +3562,20 @@ def _is_cancel(sig: list[Tok]) -> bool:
     return all(k in ("undo", "kiya", "aux", "hai", "filler", "entry", "pichla") for k in kws) and "undo" in kws
 
 
+_KNOW_WORDS = {"pata", "pta", "maloom", "malum", "maalum", "maaloom", "yaad", "idea", "know"}
+_DONT_WORDS = {"dont", "don't", "not"}
+
+
+def _is_dont_know(toks: list[Tok]) -> bool:
+    """A short "I don't know" ("pata nahi", "nahi pata", "maloom nahi", "yaad nahi", "no idea", "I don't know"):
+    never a customer name. Without this, "pata" is read as an unknown name and a new-customer question loops."""
+    words = [t for t in toks if t.cls not in ("sep", "fill") and not (t.cls == "kw" and t.kw in ("filler", "ji"))]
+    if not words or len(words) > 4 or any(t.cls in ("amt", "num", "digit") for t in words):
+        return False
+    return any(t.rom in _KNOW_WORDS for t in words) and \
+        any((t.cls == "kw" and t.kw == "neg") or t.rom in _DONT_WORDS for t in words)
+
+
 def _ordinal(sig: list[Tok]) -> int | None:
     """pehla / pehli / first -> 0, doosra / second -> 1, with or without "wala" and fillers."""
     kws = [t.kw for t in sig if not (nm.is_tag_word(t.rom) or (t.cls == "kw" and t.kw in ("filler", "hai", "ji")))]
@@ -4000,9 +4073,40 @@ def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pen
                     events[i]["kind"] = kind
             return done(events)
 
+    elif reason == "new_tag":
+        # Answer to "Naye Diwakar ki pehchaan boliye": "chai wale", "gali 3", "bina pehchaan".
+        i = pending.get("index", 0) if isinstance(pending.get("index"), int) else 0
+        i = i if 0 <= i < len(events) else 0
+        name_words = {fold(w) for w in str(events[i].get("customer") or "").lower().split()} if events else set()
+        words = [w for t in sig if t.cls != "sep" and not (t.cls == "kw" and t.kw in ("filler", "hai", "ji", "ok"))
+                 for w in (romanise_word(t.raw, False) if is_devanagari(t.raw) else t.raw).lower().split()]
+        words = [w for w in words if fold(w) not in name_words]
+        folded = {fold(w) for w in words}
+        if not events:
+            return _reask(pending, ctx)
+        if folded & {fold(w) for w in ("bina", "skip", "chhodo", "chodo")} or _is_plain_no(sig):
+            return done(events)  # no label wanted: a new customer without one
+        if not words or len(words) > 4 or any(t.cls in ("amt",) for t in sig):
+            return _reask(pending, ctx)
+        if words[-1] not in ("wale", "wali", "wala", "waale", "waali", "vale", "vali"):
+            words.append("wale")  # "gali 3" -> "gali 3 wale"
+        tag = " ".join(words)
+        taken = {fold(str(t)) for c in (candidates or []) if isinstance(c, dict) for t in (c.get("tags") or [])}
+        if fold(tag) in taken:
+            return _reask(pending, ctx)  # another Diwakar already has this label
+        events[i]["tags"] = [tag]
+        return done(events)
     elif reason == "same_name":
         cands = [c for c in (candidates or []) if isinstance(c, dict)]
         pick = None
+        if action == "append" and events and not isinstance(pending.get("settle"), str) and _wants_other(sig):
+            # "koi aur" / "naya" / "koi doosra": a different customer with the same name, opened as a new account
+            i = pending.get("index", 0) if isinstance(pending.get("index"), int) else 0
+            i = i if 0 <= i < len(events) else 0
+            events[i].pop("customer_id", None)
+            events[i]["new_customer"] = True
+            # Ask for a label, so this Diwakar can be told apart from the others next time.
+            return _clarify("new_tag", "append", events, candidates=cands, index=i, confirmed=confirmed)
         if cands:
             o = _ordinal(sig)
             untagged = [c for c in cands if not c.get("tags")]
@@ -4031,6 +4135,8 @@ def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pen
                     hits = [c for c in cands if any(nm.tag_matches(spoken, ct) for ct in (c.get("tags") or []))]
                 if len(hits) == 1:
                     pick = hits[0]
+        if pick is None and cands and len({str(c.get("name")) for c in cands}) > 1:
+            pick = _pick_by_name(sig, cands)
         if pick is not None:
             if action == "query":
                 q = dict(pending.get("query") or {})
@@ -4252,6 +4358,10 @@ def _parse(utterance: Any, today: date, ctx: Any) -> dict[str, Any]:
             result = _rejected("cancelled")
         elif not before and (has_pending or not is_cancel):
             result = _rejected("cancelled")
+    if result is None and _is_dont_know(toks):
+        # "pata nahi" is an unresolved answer to an open question (asked once more, then cancelled), never a name;
+        # on its own it is not a ledger sentence.
+        result = _reask(copy.deepcopy(pending), ctx) if has_pending else _rejected("not_ledger")
     if result is None and has_pending:
         result = _answer_pending(toks, utterance, today, ctx, copy.deepcopy(pending))
     if result is None:

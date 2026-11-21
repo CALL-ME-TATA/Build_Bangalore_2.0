@@ -35,6 +35,7 @@ NUMBER_WORDS_MAX = 9_999_999
 PRIVATE_QUERIES = {"balance", "top_dues", "outstanding_total", "due_since", "daily_summary"}
 BALANCE_CONFIRMS = {"settle", "half", "writeoff", "roundoff", "overpayment", "reminder"}  # questions stating a balance
 UTT_ID_MAX = 64
+SAME_QUESTION_MAX_REPEATS = 2  # the same question a third time in a row cancels it instead (no endless loop)
 
 
 def default_parse(utterance: str, *, today: date, ctx: dict | None = None) -> dict:
@@ -73,6 +74,8 @@ class SessionState:
     last_turn_id: int | None = None
     # The open question as it was asked: {"text","speak","reason","question","candidates","confirm","utt_id"}.
     asked: dict | None = None
+    last_question: str | None = None  # the question asked on the previous turn, if that turn asked one
+    question_repeats: int = 0  # how many turns in a row re-asked `last_question`
 
     def set_pending(self, pending: dict | None, now: datetime) -> None:
         self.asked = None
@@ -83,6 +86,8 @@ class SessionState:
         self.asked = None
         self.pending = None
         self.pending_at = None
+        self.last_question = None
+        self.question_repeats = 0
 
 
 @dataclass
@@ -499,9 +504,22 @@ class Pipeline:
                 confirm = {k: v for k, v in confirm.items() if k != "words"}  # unknown words are never shown
                 if state.private and self._states_balance(result, confirm):
                     speak_override = r.private_question().speak  # the balance stays on the screen
-            self._remember_question(state, reply, speak_override, reason, question, candidates, confirm,
-                                    utterance_id)
-            self._set_last_turn(state, "question", now)
+            if question == state.last_question:
+                state.question_repeats += 1
+            else:
+                state.last_question, state.question_repeats = question, 0
+            if state.question_repeats >= SAME_QUESTION_MAX_REPEATS:
+                # The same question a third time in a row: the answers are going round in circles (a repeated
+                # full sentence restarts the question, so the parser's own attempt count never reaches its
+                # limit). Stop with nothing saved instead of asking forever.
+                state.clear_pending()
+                status, reason, action = "rejected", "cancelled", "none"
+                reply, question, candidates, confirm, speak_override = r.cancelled(), None, None, None, None
+                self._set_last_turn(state, "none", now)
+            else:
+                self._remember_question(state, reply, speak_override, reason, question, candidates, confirm,
+                                        utterance_id)
+                self._set_last_turn(state, "question", now)
         else:
             if status == "ok":
                 reason = reason or "unknown_action"

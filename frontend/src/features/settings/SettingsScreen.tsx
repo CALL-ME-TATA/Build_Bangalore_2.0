@@ -13,6 +13,7 @@ import { ymd } from '../../lib/format';
 import { customersQuery, ledgerQuery, queryClient } from '../../services/query';
 import { session, useSession } from '../../state/session';
 import { useSettings, type TextSize, type Theme } from '../../state/settings';
+import { logout, useAuth } from '../../services/auth';
 import { ScreenHeader } from '../hisaab/ScreenParts';
 import { ChoiceGroup } from './ChoiceGroup';
 import { speedChoice, type Speed } from './choices';
@@ -146,7 +147,28 @@ export function SettingsScreen() {
           {L.demoOpen}
         </Link>
       </Section>
+
+      <AccountSection />
     </main>
+  );
+}
+
+/** Who is signed in with Google, and sign out. Shown only when sign-in is on. */
+function AccountSection() {
+  const lang = useLang();
+  const { data } = useAuth();
+  if (!data?.enabled || !data.user) return null;
+  const en = lang === 'en';
+  return (
+    <Section id="set-account" title="Account">
+      <p className="max-w-prose text-body text-ink-2">
+        {en ? 'Signed in as ' : 'Login: '}
+        <span className="text-ink">{data.user.email}</span>
+      </p>
+      <Button variant="secondary" className="self-start" onClick={() => void logout()}>
+        {en ? 'Sign out' : 'Logout karein'}
+      </Button>
+    </Section>
   );
 }
 

@@ -599,3 +599,36 @@ html[data-text='xlarge'] {
     border-top-color: CanvasText;
   }
 }
+
+/* ---- landing page (#/welcome) ----------------------------------------------------------------------------- */
+/* Sections rise 32px and fade in once; tagline words go from muted to full ink one by one. */
+.kv-reveal {
+  opacity: 0;
+  transform: translateY(2rem);
+  transition: opacity 700ms var(--ease-out), transform 700ms var(--ease-out);
+}
+.kv-reveal[data-shown] {
+  opacity: 1;
+  transform: none;
+}
+.kv-word {
+  color: color-mix(in srgb, var(--kv-ink) 30%, transparent);
+  transition: color 500ms var(--ease-out);
+}
+.kv-word[data-on] {
+  color: var(--kv-ink);
+}
+@media (prefers-reduced-motion: reduce) {
+  .kv-reveal {
+    transform: none;
+    transition: opacity 300ms var(--ease-out);
+  }
+  .kv-word {
+    transition: none;
+  }
+}
+@media (forced-colors: active) {
+  .kv-word {
+    color: CanvasText;
+  }
+}

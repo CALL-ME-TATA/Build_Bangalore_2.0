@@ -1,7 +1,8 @@
 // Root layout: skip link, live regions, navigation (bottom tabs below 1024px, the rail above), the floating
 // mic link to Bolo on the other screens (60px, as on the Khata board), the doubt sheet and the update prompt.
 // Each screen renders its own header, <main id="main"> and one h1 (the Bolo header lives in the Bolo screen).
-import { createRootRoute, Link, Outlet, useRouterState } from '@tanstack/react-router';
+import { createRootRoute, Link, Navigate, Outlet, useRouterState } from '@tanstack/react-router';
+import { useAuth } from '../services/auth';
 import { Mic } from 'lucide-react';
 import { lazy, Suspense, useEffect } from 'react';
 import { labels } from '../i18n';
@@ -56,6 +57,19 @@ function RootLayout() {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const L = labels(lang);
   const onBolo = path === '/';
+  const auth = useAuth();
+
+  // The landing page stands alone: no rail, tabs, mini mic or doubt sheet.
+  if (path === '/welcome') {
+    return (
+      <>
+        <SkipLink label={L.skipToContent} />
+        <Outlet />
+      </>
+    );
+  }
+  // With Google sign-in on, the khata is behind it (the server refuses data and the voice socket anyway).
+  if (auth.data?.enabled && !auth.data.user) return <Navigate to="/welcome" replace />;
 
   return (
     <>

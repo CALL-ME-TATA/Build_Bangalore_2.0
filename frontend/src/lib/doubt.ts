@@ -129,16 +129,25 @@ export function doubtSpec({ reason, question, candidates, confirm, lang }: Doubt
   }
 
   if (reason === 'same_name') {
+    // "Diwakar, Diwakar Sharma ya koi aur?": when the question offers someone else with the same name, so does the
+    // sheet (last button); the parser opens a new account for "koi aur". Tag questions are unchanged (3.4).
+    const offersOther = /\b(koi aur|someone else)\s*\?*\s*$/i.test(q);
+    const otherOpt: DoubtOption[] = offersOther ? [{ id: 'other', label: L.answerOtherCustomer, answer: 'koi aur' }] : [];
     const custs = cands.filter(isCustomer);
-    if (custs.length >= 2) return { kind: 'choice', typeBox: false, options: customerOptions(custs, false, L.noTag) };
-    const names = namesAfterColon(q);
+    if (custs.length >= 2) return { kind: 'choice', typeBox: false, options: [...customerOptions(custs, false, L.noTag), ...otherOpt] };
+    const names = namesAfterColon(q).filter((n) => !/^(koi aur|someone else)$/i.test(n));
     if (names.length < 2) return none;
     // Two names keep sending the name itself; three send the ordinals, as with candidates.
     return {
       kind: 'choice',
       typeBox: false,
-      options: names.slice(0, 3).map((n, i) => ({ id: `name-${i}`, label: capFirst(n), answer: names.length >= 3 ? (ORDINAL[i] ?? n) : n })),
+      options: [...names.slice(0, 3).map((n, i) => ({ id: `name-${i}`, label: capFirst(n), answer: names.length >= 3 ? (ORDINAL[i] ?? n) : n })), ...otherOpt],
     };
+  }
+
+  // After "koi aur": the shopkeeper says or types a label ("chai wale"); one tap keeps the new account unlabelled.
+  if (reason === 'new_tag') {
+    return { kind: 'open', typeBox: true, options: [{ id: 'notag', label: L.answerNoLabel, answer: 'bina pehchaan' }] };
   }
 
   if (reason === 'new_customer') {
@@ -187,8 +196,9 @@ export function doubtSpec({ reason, question, candidates, confirm, lang }: Doubt
 
   // "Ramesh ka kya likhun?" ends like a yes / no question but is open: the answer is an amount.
   if (reason === 'missing_amount' || reason === 'missing_customer') return none;
-  if (reason === 'plausibility' || reason === 'confirm_entry' || confirm) return yesNo(lang);
 
+  // An either/or question keeps its two answers even when a confirmation rides along (strict mode carries one):
+  // "Haan" cannot answer "Ramesh ne diye, ya Ramesh ko udhaar?".
   if (reason === 'ambiguous_direction') {
     return {
       kind: 'open',
@@ -212,6 +222,7 @@ export function doubtSpec({ reason, question, candidates, confirm, lang }: Doubt
     };
   }
 
+  if (reason === 'plausibility' || reason === 'confirm_entry' || confirm) return yesNo(lang);
   if (YES_NO_ENDINGS.test(q)) return yesNo(lang);
   return none;
 }
