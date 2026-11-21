@@ -3,7 +3,8 @@
 Every event is logged. A `reminder_queued` event is also delivered as an SMS through Twilio when TWILIO_* is set
 (CONTRACT 3.8). The event carries ids only, so the worker reads the reminder from the shop's own ledger on this
 machine (the same files and ledger key as the server) and sends nothing unless every check passes:
-- sending hours (09:00 to 20:00 shop time), the row still pending (not sent before, not removed by an opt-out),
+- sending hours (09:00 to 20:00 shop time, or any hour with REMINDER_ANY_HOUR=1), the row still pending (not sent
+  before, not removed by an opt-out),
   the customer still opted in, still owing, with a phone number, and no reminder sent to them in the last 24 hours;
 - the number is in TWILIO_ALLOWED_TO.
 The message is rebuilt from the current balance in the customer's language (the same text as the WhatsApp link).
@@ -106,6 +107,10 @@ def main() -> int:
     if not cfg.kafka_bootstrap:
         print("KAFKA_BOOTSTRAP is not set", file=sys.stderr)
         return 2
+    from .ledger import set_reminder_any_hour
+
+    set_reminder_any_hour(cfg.reminder_any_hour)
+    log.info("reminders may be sent %s", "at any hour" if cfg.reminder_any_hour else "from 09:00 to 20:00 shop time")
     sms = sms_from_settings(cfg)
     sender = ReminderSender(cfg, sms) if sms is not None else None
     if sender is None:

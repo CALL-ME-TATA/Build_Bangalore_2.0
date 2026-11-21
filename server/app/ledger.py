@@ -83,8 +83,9 @@ ENTRY_KINDS = ("credit", "payment", "writeoff")
 PORTAL_SESSION = "portal"  # session id of events written on the khata screens
 _UNSET: Any = object()
 PERIODS = ("today", "yesterday", "this_week", "last_week", "this_month", "last_month")
-QUIET_START_HOUR = 9   # reminders are queued and listed only from 09:00
-QUIET_END_HOUR = 20    # ... to 20:00 shop time
+QUIET_START_HOUR = 9   # reminders are queued, listed and sent only from 09:00
+QUIET_END_HOUR = 20    # ... to 20:00 shop time, unless REMINDER_ANY_HOUR is on (set_reminder_any_hour)
+_REMINDERS_ANY_HOUR = False  # set once per process from the settings, by the app and by the Kafka consumer
 
 # One write lock per database file and process, shared by every Ledger opened on that file.
 _WRITE_LOCKS: dict[str, threading.RLock] = {}
@@ -125,8 +126,17 @@ def period_range(period: str, today: date) -> tuple[date, date]:
     return today, today
 
 
+def set_reminder_any_hour(on: bool) -> None:
+    """REMINDER_ANY_HOUR: with it on, reminders may be queued, listed and sent at any hour (default: 09:00 to
+    20:00 shop time only)."""
+    global _REMINDERS_ANY_HOUR
+    _REMINDERS_ANY_HOUR = bool(on)
+
+
 def in_quiet_hours(now: datetime) -> bool:
-    """True outside 09:00 to 20:00 of `now` (which is shop time)."""
+    """True outside 09:00 to 20:00 of `now` (which is shop time); never when REMINDER_ANY_HOUR is on."""
+    if _REMINDERS_ANY_HOUR:
+        return False
     return not (QUIET_START_HOUR <= now.hour < QUIET_END_HOUR)
 
 

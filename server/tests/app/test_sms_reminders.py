@@ -179,6 +179,56 @@ def test_settings():
     assert Settings.from_env({"TWILIO_ACCOUNT_SID": "AC1", "TWILIO_AUTH_TOKEN": "t", "TWILIO_FROM": "+1555"}).sms_enabled
 
 
+# ---- REMINDER_ANY_HOUR ------------------------------------------------------------------------------------------------
+@pytest.fixture
+def any_hour():
+    from app.ledger import set_reminder_any_hour
+
+    set_reminder_any_hour(True)
+    yield
+    set_reminder_any_hour(False)  # the default for every other test
+
+
+def test_with_reminder_any_hour_a_reminder_goes_out_at_one_in_the_night(shop, any_hour):
+    cfg, led, ramesh = shop
+    one_am = ELEVEN.replace(hour=1)
+    fake = FakeTwilio()
+    event = queued(led, ramesh, one_am)
+    assert event["reminder_id"] is not None
+    assert sender(cfg, fake, at=one_am).deliver(event).startswith("sent:") and len(fake.sent) == 1
+
+
+def test_by_default_the_night_stays_quiet(shop):
+    cfg, led, ramesh = shop
+    assert led.queue_reminder(ramesh, ELEVEN.replace(hour=1)) is None
+    assert Settings.from_env({}).reminder_any_hour is False
+    assert Settings.from_env({"REMINDER_ANY_HOUR": "1"}).reminder_any_hour is True
+
+
+def test_the_app_applies_reminder_any_hour_from_its_settings(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from app.ledger import in_quiet_hours, set_reminder_any_hour
+    from app.main import create_app
+
+    one_am = ELEVEN.replace(hour=1)
+    try:
+        s = Settings(gnani_api_key="k", gnani_base_url="http://127.0.0.1:9", ledger_key=TEST_KEY,
+                     ledger_db=str(tmp_path / "data" / "khata.db"), tts_prewarm=False, reminder_any_hour=True)
+        app = create_app(s, web_dir=tmp_path, now=lambda: one_am)
+        with TestClient(app, base_url="http://127.0.0.1:8000") as c:
+            led = app.state.ctx.ledger
+            led.apply({"action": "append", "events": [{"kind": "credit", "customer": "ramesh", "amount": 100,
+                                                        "date": "2026-11-22"}]}, now=one_am)
+            cid = led.find_customer(key="ramesh")["id"]
+            led.set_reminder_opt_in(cid, True, "9812345678", now=one_am)
+            r = c.post(f"/api/customers/{cid}/remind").json()
+            assert r["quiet_hours"] is False and r["queued"]
+            assert not in_quiet_hours(one_am)
+    finally:
+        set_reminder_any_hour(False)
+
+
 # ---- the button queues one customer only ----------------------------------------------------------------------------
 def test_the_button_queues_a_reminder_for_one_customer_only(tmp_path):
     from fastapi.testclient import TestClient

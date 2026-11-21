@@ -29,7 +29,7 @@ from .gnani.stt import SttClient
 from .gnani.tts import TtsClient
 from .gnani.tts import _memory_cache as tts_memory_cache
 from .edits import EditError
-from .ledger import Ledger, in_quiet_hours
+from .ledger import Ledger, in_quiet_hours, set_reminder_any_hour
 from .llm import client_from_settings as llm_client_from_settings
 from .llm import from_settings as from_llm_settings
 from .regional import Regional
@@ -153,6 +153,7 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
             fresh = get_settings()
             for f in fields(cfg):
                 setattr(cfg, f.name, getattr(fresh, f.name))
+        set_reminder_any_hour(cfg.reminder_any_hour)  # REMINDER_ANY_HOUR: lift the 09:00 to 20:00 window
         crypto = Crypto(load_key(cfg.ledger_key, cfg.key_path))
         ledger = Ledger(cfg.db_path, crypto)
         llm_parse = from_llm_settings(default_parse, cfg) if parse is None else None

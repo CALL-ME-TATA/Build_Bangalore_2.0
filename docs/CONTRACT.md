@@ -1178,6 +1178,8 @@ Kafka consumer). On when `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` and `TWILIO_M
 - After Twilio accepts it the row is marked `sent`, so a repeated event sends nothing; a refusal (HTTP status and
   Twilio code in the log) leaves it pending, and the next press sends it.
 - Phone numbers, names, message text and the auth token never go into Kafka or the log.
+- `REMINDER_ANY_HOUR=1` lifts the 09:00 to 20:00 window (Q06) for queueing, listing and sending, in the server
+  and in the consumer. Default off. Opt-in, the allow-list and one SMS per customer per 24 hours still apply.
 
 ## 4. Gnani API Platform (`server/app/gnani/`), verified against docs.gnani.ai
 

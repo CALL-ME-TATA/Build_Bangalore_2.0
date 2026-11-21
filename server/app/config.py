@@ -77,6 +77,7 @@ class Settings:
     twilio_messaging_service_sid: str = ""  # MG...; or TWILIO_FROM, a Twilio phone number
     twilio_from: str = ""
     twilio_allowed_to: str = ""  # numbers that may receive an SMS, comma separated; "*" = anyone; empty = nobody
+    reminder_any_hour: bool = False  # REMINDER_ANY_HOUR=1: reminders at any hour, not only 09:00 to 20:00
     host: str = "127.0.0.1"
     port: int = 8000
 
@@ -137,6 +138,7 @@ class Settings:
             twilio_messaging_service_sid=get("TWILIO_MESSAGING_SERVICE_SID"),
             twilio_from=get("TWILIO_FROM"),
             twilio_allowed_to=get("TWILIO_ALLOWED_TO"),
+            reminder_any_hour=_flag(get("REMINDER_ANY_HOUR", "0")),
             host=get("HOST", cls.host),
             port=int(get("PORT", str(cls.port))),
         )
