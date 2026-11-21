@@ -198,6 +198,7 @@ generated, so this shows how the pipeline fails, not how real shop noise sounds.
 ## Quick start
 
 You need Python 3.11 or newer, Node (for the web app build) and Chrome. Run these from the repository root.
+`setup.ps1` (Windows) and `setup.sh` (macOS or Linux) run the install and build steps below in one go.
 
 Windows (PowerShell):
 ```
