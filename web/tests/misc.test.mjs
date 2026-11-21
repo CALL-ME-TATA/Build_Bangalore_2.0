@@ -34,7 +34,8 @@ test('latencyRows lists server hops and the phone measurement', () => {
 });
 
 test('stateLabel falls back to idle', () => {
-  assert.match(stateLabel('speaking'), /Speaking/);
+  assert.equal(stateLabel('speaking', 'en'), 'Speaking…');
+  assert.equal(stateLabel('idle', 'hi'), 'Dabakar boliye');
   assert.equal(stateLabel('bogus'), stateLabel('idle'));
 });
 

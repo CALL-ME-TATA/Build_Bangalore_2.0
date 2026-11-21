@@ -1,4 +1,5 @@
 // Pure formatting helpers for the UI.
+import { t } from './i18n.js';
 
 /** Whole rupees with Indian digit grouping: 125000 -> "₹1,25,000". */
 export function rupees(n) {
@@ -49,17 +50,8 @@ export function entryCard(entry, today) {
   };
 }
 
-const STATE_LABELS = {
-  listening: 'Sun raha hoon… (Listening)',
-  hearing: 'Aawaz aa rahi hai… (Hearing)',
-  transcribing: 'Samajh raha hoon… (Transcribing)',
-  thinking: 'Soch raha hoon… (Thinking)',
-  speaking: 'Bol raha hoon… (Speaking)',
-  idle: 'Dabakar boliye (Hold to talk)',
-};
-
-export function stateLabel(phase) {
-  return STATE_LABELS[phase] || STATE_LABELS.idle;
+export function stateLabel(phase, lang = 'hi') {
+  return t(lang, phase) || t(lang, 'idle');
 }
 
 /** Latency rows for the chip, from the server timing message and the client measurement. */

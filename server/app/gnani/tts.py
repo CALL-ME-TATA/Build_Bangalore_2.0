@@ -18,6 +18,7 @@ from typing import AsyncIterator
 import websockets
 
 from ..config import TTS_MODEL, Settings
+from .stt import WS_LOG
 
 log = logging.getLogger("khata.tts")
 
@@ -29,10 +30,15 @@ class TtsError(Exception):
     pass
 
 
-def cache_key(settings: Settings, text: str) -> str:
+def tts_language(settings: Settings, lang: str) -> str:
+    """Gnani language code for a reply language: en-IN for English, the configured code otherwise."""
+    return "en-IN" if lang == "en" else settings.tts_language
+
+
+def cache_key(settings: Settings, text: str, lang: str = "hi") -> str:
     # The service address is part of the key, so audio from a mock server is never replayed as real speech.
     raw = "\x1f".join([text, settings.tts_voice, TTS_MODEL, str(settings.tts_sample_rate),
-                       settings.tts_language, settings.gnani_base_url])
+                       tts_language(settings, lang), settings.gnani_base_url])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -54,6 +60,7 @@ class TtsClient:
         self._ws = None
         self._lock = asyncio.Lock()
         self._warm_task: asyncio.Task | None = None
+        self._watcher: asyncio.Task | None = None
         self.busy = False
         self.closed = False
 
@@ -61,7 +68,8 @@ class TtsClient:
     async def _connect(self):
         return await websockets.connect(self.settings.tts_url,
                                         additional_headers={"X-API-Key-ID": self.settings.gnani_api_key},
-                                        max_size=None, open_timeout=5, ping_interval=20, ping_timeout=20)
+                                        max_size=None, open_timeout=5, close_timeout=0.5,
+                                        ping_interval=20, ping_timeout=20, logger=WS_LOG)
 
     def warm(self) -> None:
         """Start opening the socket in the background."""
@@ -73,15 +81,31 @@ class TtsClient:
         try:
             async with self._lock:
                 if self._ws is None and not self.closed:
-                    self._ws = await self._connect()
+                    self._set_socket(await self._connect())
         except Exception as exc:
             log.warning("tts warm-up failed: %s", type(exc).__name__)
 
+    def _set_socket(self, ws) -> None:
+        """Adopt a new socket and watch it: when it closes, a replacement is opened in the background."""
+        self._ws = ws
+        self._watcher = asyncio.create_task(self._watch(ws))
+
+    async def _watch(self, ws) -> None:
+        try:
+            await ws.wait_closed()
+        except Exception:
+            pass
+        if self._ws is ws:
+            self._ws = None
+            if not self.closed:
+                self.warm()
+
     async def _drop_socket(self) -> None:
+        """Close the current socket without waiting long for the closing handshake."""
         ws, self._ws = self._ws, None
         if ws is not None:
             try:
-                await ws.close()
+                await asyncio.wait_for(ws.close(), 1.0)
             except Exception:
                 pass
 
@@ -96,11 +120,13 @@ class TtsClient:
         self.closed = True
         if self._warm_task is not None:
             self._warm_task.cancel()
+        if self._watcher is not None:
+            self._watcher.cancel()
         await self._drop_socket()
 
     # ---- cache ------------------------------------------------------------------------------------------------
-    def cached(self, text: str) -> bytes | None:
-        key = cache_key(self.settings, text)
+    def cached(self, text: str, lang: str = "hi") -> bytes | None:
+        key = cache_key(self.settings, text, lang)
         if key in self._mem:
             return self._mem[key]
         path = self.cache_dir / f"{key}.pcm"
@@ -110,9 +136,11 @@ class TtsClient:
             return data
         return None
 
-    def _store(self, text: str, pcm: bytes) -> None:
-        key = cache_key(self.settings, text)
+    def _store(self, text: str, pcm: bytes, persist: bool, lang: str = "hi") -> None:
+        key = cache_key(self.settings, text, lang)
         self._mem[key] = pcm
+        if not persist:
+            return
         try:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             (self.cache_dir / f"{key}.pcm").write_bytes(pcm)
@@ -120,17 +148,21 @@ class TtsClient:
             log.warning("tts cache write failed")
 
     # ---- synthesis --------------------------------------------------------------------------------------------
-    def _request(self, text: str) -> str:
+    def _request(self, text: str, lang: str = "hi") -> str:
         return json.dumps({
             "text": text, "voice": self.settings.tts_voice, "model": TTS_MODEL,
-            "language": self.settings.tts_language, "speed": 1.0,
+            "language": tts_language(self.settings, lang), "speed": 1.0,
             "audio_config": {"sample_rate": self.settings.tts_sample_rate, "num_channels": 1, "sample_width": 2,
                              "encoding": "linear_pcm", "container": "raw"},
         }, ensure_ascii=False)
 
-    async def synth(self, text: str) -> AsyncIterator[bytes]:
-        """Yield PCM chunks (16-bit little-endian). Cached audio is served without touching the network."""
-        hit = self.cached(text)
+    async def synth(self, text: str, persist: bool = False, lang: str = "hi") -> AsyncIterator[bytes]:
+        """Yield PCM chunks (16-bit little-endian). Cached audio is served without touching the network.
+
+        Audio is always kept in memory; it is written under data/tts_cache/ only when `persist` is true, which
+        callers set for wording that has no customer name and no amount.
+        """
+        hit = self.cached(text, lang)
         if hit is not None:
             for i in range(0, len(hit), CACHE_CHUNK):
                 yield hit[i:i + CACHE_CHUNK]
@@ -141,51 +173,48 @@ class TtsClient:
             collected = bytearray()
             carry = b""
             try:
+                # A socket that dies before `start` is replaced and the request is sent once more.
                 for attempt in (1, 2):
-                    if self._ws is None:
-                        self._ws = await self._connect()
+                    seen_start = False
                     try:
-                        await self._ws.send(self._request(text))
-                        break
-                    except websockets.ConnectionClosed:
-                        self._ws = None
-                        if attempt == 2:
-                            raise TtsError("connection closed")
-                ws = self._ws
-                # Gnani sends a second `complete` (with `message`, without `data`) after each reply, and
-                # start.request_id names the connection. Messages before this request's `start` are discarded.
-                seen_start = False
-                async for raw in ws:
-                    msg = json.loads(raw)
-                    kind = msg.get("type")
-                    if kind == "start":
-                        seen_start = True
-                        continue
-                    if kind == "error":
-                        raise TtsError(str(msg.get("message") or "tts error"))
-                    if not seen_start:
-                        continue
-                    if kind == "audio":
-                        data = base64.b64decode((msg.get("data") or {}).get("audio") or "")
-                        data = carry + strip_wav_header(data)
-                        if len(data) % 2:
-                            carry, data = data[-1:], data[:-1]
+                        if self._ws is None:
+                            self._set_socket(await self._connect())
+                        ws = self._ws
+                        await ws.send(self._request(text, lang))
+                        # Gnani sends a second `complete` (with `message`, without `data`) after each reply, and
+                        # start.request_id names the connection. Messages before `start` are discarded.
+                        async for raw in ws:
+                            msg = json.loads(raw)
+                            kind = msg.get("type")
+                            if kind == "start":
+                                seen_start = True
+                            elif kind == "error":
+                                raise TtsError(str(msg.get("message") or "tts error"))
+                            elif not seen_start:
+                                continue
+                            elif kind == "audio":
+                                data = base64.b64decode((msg.get("data") or {}).get("audio") or "")
+                                data = carry + strip_wav_header(data)
+                                if len(data) % 2:
+                                    carry, data = data[-1:], data[:-1]
+                                else:
+                                    carry = b""
+                                if data:
+                                    collected.extend(data)
+                                    yield data
+                            elif kind == "complete":
+                                done = True
+                                break
                         else:
-                            carry = b""
-                        if data:
-                            collected.extend(data)
-                            yield data
-                    elif kind == "complete":
-                        done = True
+                            raise websockets.ConnectionClosed(None, None)
                         break
-                    elif kind == "error":
-                        raise TtsError(str(msg.get("message") or "tts error"))
-                else:
-                    raise TtsError("connection closed before complete")
+                    except websockets.ConnectionClosed as exc:
+                        started_output = bool(collected) or seen_start
+                        self._ws = None
+                        if started_output or attempt == 2:
+                            raise TtsError("connection closed") from exc
                 if collected:
-                    self._store(text, bytes(collected))
-            except websockets.ConnectionClosed as exc:
-                raise TtsError("connection closed") from exc
+                    self._store(text, bytes(collected), persist, lang)
             finally:
                 self.busy = False
                 if not done:

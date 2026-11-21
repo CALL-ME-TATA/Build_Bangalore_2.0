@@ -1,0 +1,601 @@
+/*
+  KhataVaani design system. Every colour, size, radius and shadow used by components is defined here.
+  Components use the Tailwind utilities these tokens generate (bg-paper, text-ink, text-amount, rounded-control…)
+  and never raw hex values.
+
+  Themes: light (default), dark ([data-theme=dark], or system dark when data-theme is "system" or absent),
+  high contrast ([data-contrast=more] or prefers-contrast: more), Windows forced colours.
+  Text size: [data-text=normal|large|xlarge] scales the root font size; every size below is in rem.
+*/
+@import 'tailwindcss';
+@import './fonts.css';
+
+/* ---- theme values (the only place with hex values) ------------------------------------------------------ */
+:root {
+  color-scheme: light;
+  --kv-paper: #faf8f4;
+  --kv-surface: #ffffff;
+  --kv-tint: #f1ece2;
+  --kv-ink: #14182b;
+  --kv-ink-2: #5b5f6e;
+  --kv-line: #e6e0d4;
+  --kv-line-strong: #d9d3c7;
+  --kv-fill: #f3efe7;
+  --kv-avatar: #efe9de;
+  --kv-highlight: #f6f1e7;
+  --kv-ink-3: #8a8d99;
+  --kv-muted: #c9c3b8;
+  --kv-accent: #b35c12;
+  --kv-on-accent: #ffffff;
+  --kv-credit: #b23a2a;
+  --kv-payment: #256b45;
+  --kv-ask: #8a5300;
+  --kv-shadow: 0 10px 28px rgb(20 24 43 / 0.18);
+  --kv-scrim: rgb(20 24 43 / 0.42);
+  --kv-shadow-sheet: 0 -12px 40px rgb(20 24 43 / 0.16);
+}
+
+/* Dark values appear twice: once for the explicit setting, once for the system preference. Keep them in step. */
+[data-theme='dark'] {
+  color-scheme: dark;
+  --kv-paper: #111214;
+  --kv-surface: #1a1b1e;
+  --kv-tint: #23252a;
+  --kv-ink: #f2efea;
+  --kv-ink-2: #a9acb6;
+  --kv-line: #2c2e34;
+  --kv-line-strong: #3a3d44;
+  --kv-fill: #202226;
+  --kv-avatar: #26282d;
+  --kv-highlight: #24262b;
+  --kv-ink-3: #6e717c;
+  --kv-muted: #3e4148;
+  --kv-accent: #e08a3c;
+  --kv-on-accent: #111214;
+  --kv-credit: #e07a68;
+  --kv-payment: #5dbb86;
+  --kv-ask: #e3a548;
+  --kv-shadow: 0 10px 28px rgb(0 0 0 / 0.5);
+  --kv-scrim: rgb(0 0 0 / 0.6);
+  --kv-shadow-sheet: 0 -12px 40px rgb(0 0 0 / 0.5);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']):not([data-theme='dark']) {
+    color-scheme: dark;
+    --kv-paper: #111214;
+    --kv-surface: #1a1b1e;
+    --kv-tint: #23252a;
+    --kv-ink: #f2efea;
+    --kv-ink-2: #a9acb6;
+    --kv-line: #2c2e34;
+    --kv-line-strong: #3a3d44;
+  --kv-fill: #202226;
+  --kv-avatar: #26282d;
+  --kv-highlight: #24262b;
+  --kv-ink-3: #6e717c;
+  --kv-muted: #3e4148;
+    --kv-accent: #e08a3c;
+    --kv-on-accent: #111214;
+    --kv-credit: #e07a68;
+    --kv-payment: #5dbb86;
+    --kv-ask: #e3a548;
+    --kv-shadow: 0 10px 28px rgb(0 0 0 / 0.5);
+    --kv-scrim: rgb(0 0 0 / 0.6);
+    --kv-shadow-sheet: 0 -12px 40px rgb(0 0 0 / 0.5);
+  }
+}
+
+/* High contrast, light: pure paper, near-black ink, darker inks and visible hairlines. */
+[data-contrast='more'] {
+  --kv-paper: #ffffff;
+  --kv-surface: #ffffff;
+  --kv-tint: #ece6da;
+  --kv-ink: #000000;
+  --kv-ink-2: #2b2e38;
+  --kv-line: #6b6559;
+  --kv-line-strong: #3d3a33;
+  --kv-fill: #ece6da;
+  --kv-avatar: #e6dfd2;
+  --kv-highlight: #efe8da;
+  --kv-ink-3: #4a4d57;
+  --kv-muted: #8a8478;
+  --kv-accent: #8f4500;
+  --kv-credit: #8e2416;
+  --kv-payment: #17502f;
+  --kv-ask: #613a00;
+}
+[data-contrast='more'][data-theme='dark'] {
+  --kv-paper: #000000;
+  --kv-surface: #000000;
+  --kv-tint: #1c1d21;
+  --kv-ink: #ffffff;
+  --kv-ink-2: #dadce2;
+  --kv-line: #8a8d96;
+  --kv-line-strong: #c4c6cc;
+  --kv-fill: #141518;
+  --kv-avatar: #1c1d21;
+  --kv-highlight: #1c1d21;
+  --kv-ink-3: #b4b7bf;
+  --kv-muted: #6c6f78;
+  --kv-accent: #f2a865;
+  --kv-on-accent: #000000;
+  --kv-credit: #f5a394;
+  --kv-payment: #86dcaa;
+  --kv-ask: #f5c879;
+}
+@media (prefers-color-scheme: dark) {
+  [data-contrast='more']:not([data-theme='light']):not([data-theme='dark']) {
+    --kv-paper: #000000;
+    --kv-surface: #000000;
+    --kv-tint: #1c1d21;
+    --kv-ink: #ffffff;
+    --kv-ink-2: #dadce2;
+    --kv-line: #8a8d96;
+    --kv-line-strong: #c4c6cc;
+  --kv-fill: #141518;
+  --kv-avatar: #1c1d21;
+  --kv-highlight: #1c1d21;
+  --kv-ink-3: #b4b7bf;
+  --kv-muted: #6c6f78;
+    --kv-accent: #f2a865;
+    --kv-on-accent: #000000;
+    --kv-credit: #f5a394;
+    --kv-payment: #86dcaa;
+    --kv-ask: #f5c879;
+  }
+}
+@media (prefers-contrast: more) {
+  :root:not([data-theme='dark']) {
+    --kv-paper: #ffffff;
+    --kv-surface: #ffffff;
+    --kv-ink: #000000;
+    --kv-ink-2: #2b2e38;
+    --kv-line: #6b6559;
+    --kv-line-strong: #3d3a33;
+  --kv-fill: #ece6da;
+  --kv-avatar: #e6dfd2;
+  --kv-highlight: #efe8da;
+  --kv-ink-3: #4a4d57;
+  --kv-muted: #8a8478;
+    --kv-accent: #8f4500;
+    --kv-credit: #8e2416;
+    --kv-payment: #17502f;
+    --kv-ask: #613a00;
+  }
+}
+
+/* ---- tokens ---------------------------------------------------------------------------------------------- */
+@theme {
+  /* Only these colours exist; the default palette is removed so nothing else can be used by accident. */
+  --color-*: initial;
+  --color-paper: var(--kv-paper);
+  --color-surface: var(--kv-surface);
+  --color-tint: var(--kv-tint);
+  --color-ink: var(--kv-ink);
+  --color-ink-2: var(--kv-ink-2);
+  --color-line: var(--kv-line);
+  --color-line-strong: var(--kv-line-strong);
+  --color-fill: var(--kv-fill);
+  --color-avatar: var(--kv-avatar);
+  --color-highlight: var(--kv-highlight);
+  --color-ink-3: var(--kv-ink-3);
+  --color-muted: var(--kv-muted);
+  --color-accent: var(--kv-accent);
+  --color-on-accent: var(--kv-on-accent);
+  --color-credit: var(--kv-credit);
+  --color-payment: var(--kv-payment);
+  --color-ask: var(--kv-ask);
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
+  /* Families. Spectral: money and display only. Plex Sans: all UI text, with Devanagari and Kannada fallbacks. */
+  --font-*: initial;
+  --font-display: 'Spectral', 'Spectral Fallback', Georgia, serif;
+  --font-sans: 'IBM Plex Sans Variable', 'IBM Plex Sans', 'IBM Plex Sans Devanagari', 'Noto Sans Kannada Variable',
+    'Plex Fallback', system-ui, sans-serif;
+
+  /* Type scale (rem, so "Bada text" and browser zoom scale it). */
+  --text-*: initial;
+  --text-hero: 4rem;
+  --text-hero--line-height: 1.05;
+  --text-hero--letter-spacing: -0.03em;
+  --text-hero--font-weight: 500;
+  --text-title: 2.25rem;
+  --text-title--line-height: 1.1;
+  --text-title--letter-spacing: -0.02em;
+  --text-title--font-weight: 500;
+  --text-title-lg: 2.5rem; /* desktop screen title, 40 */
+  --text-title-lg--line-height: 1.1;
+  --text-title-lg--letter-spacing: -0.02em;
+  --text-title-lg--font-weight: 500;
+  --text-title-md: 2rem; /* mobile screen title, 32 */
+  --text-title-md--line-height: 1.1;
+  --text-title-md--letter-spacing: -0.02em;
+  --text-title-md--font-weight: 500;
+  --text-title-sm: 1.5rem;
+  --text-title-sm--line-height: 1.15;
+  --text-title-sm--letter-spacing: -0.015em;
+  --text-title-sm--font-weight: 500;
+  --text-question: 2.25rem;
+  --text-question--line-height: 1.1;
+  --text-question--letter-spacing: -0.02em;
+  --text-question--font-weight: 500;
+  --text-total: 1.875rem;
+  --text-total--line-height: 1.15;
+  --text-total--letter-spacing: -0.01em;
+  --text-total--font-weight: 500;
+  --text-amount-lg: 1.5rem;
+  --text-amount-lg--line-height: 1.2;
+  --text-amount-lg--font-weight: 500;
+  --text-amount: 1.25rem;
+  --text-amount--line-height: 1.2;
+  --text-amount--font-weight: 500;
+  --text-body-lg: 1.125rem; /* desktop conversation, 18 */
+  --text-body-lg--line-height: 1.5;
+  --text-body: 1.0625rem; /* 17 */
+  --text-body--line-height: 1.5;
+  --text-head: 1.0625rem; /* shop name in the mobile header, 17/600 */
+  --text-head--line-height: 1.3;
+  --text-head--letter-spacing: -0.01em;
+  --text-head--font-weight: 600;
+  --text-label: 1rem;
+  --text-label--line-height: 1.4;
+  --text-label--font-weight: 500;
+  --text-label-sm: 0.9375rem; /* entry row labels, rail and buttons, 15 */
+  --text-label-sm--line-height: 1.4;
+  --text-small: 0.875rem; /* status labels, hints, dates, 14 */
+  --text-small--line-height: 1.4;
+  --text-nav: 0.75rem; /* bottom tab labels, 12 */
+  --text-nav--line-height: 1.2;
+  --text-meta: 0.8125rem;
+  --text-meta--line-height: 1.4;
+  --text-eyebrow: 0.75rem;
+  --text-eyebrow--line-height: 1.3;
+  --text-eyebrow--letter-spacing: 0.08em;
+  --text-eyebrow--font-weight: 600;
+
+  /* Shape: 10-12 for controls, 16 for sheets and bubbles, full for the mic. */
+  --radius-*: initial;
+  --radius-chip: 0.625rem;
+  --radius-control: 0.75rem;
+  --radius-sheet: 1rem; /* bubbles, answer buttons, live box */
+  --radius-sheet-lg: 1.5rem; /* bottom sheet top corners */
+  --radius-wave: 0.875rem; /* wave bar */
+  --radius-nav: 0.625rem; /* rail items, highlighted rows */
+  --radius-full: 9999px;
+
+  /* Depth: one soft shadow, for the floating mic and sheets only. */
+  --shadow-*: initial;
+  --shadow-float: var(--kv-shadow);
+  --shadow-sheet: var(--kv-shadow-sheet);
+
+  /* Motion: 160-240 ms, ease-out. */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --default-transition-duration: 200ms;
+  --default-transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --breakpoint-sm: 40rem; /* tablet: two panes */
+  --breakpoint-lg: 64rem; /* desktop: rail, conversation, side column */
+  --breakpoint-xl: 90rem;
+
+  /* Layout sizes */
+  --spacing-mic: 5rem; /* 80px hero mic */
+  --spacing-mic-box: 5.5rem; /* 88px box around it */
+  --spacing-mic-desk: 4.5rem; /* 72px desktop mic */
+  --spacing-mic-sm: 3.75rem; /* 60px floating mini mic */
+  --spacing-rail: 14.5rem; /* 232px desktop rail */
+  --spacing-bubble: 16.875rem; /* 270px bubble max width */
+  --spacing-amount: 5.75rem; /* 92px amount column in entry rows */
+  --spacing-amount-sm: 5rem; /* 80px amount column in the side panel */
+  --spacing-tabs: 4.25rem; /* bottom tab bar: 6 + 52 + 10 px, plus the safe-area inset */
+  --spacing-target: 3rem; /* 48px minimum touch target */
+  --container-prose: 60ch;
+  --container-talk: 40rem; /* ~640px centred conversation */
+  --container-shell: 90rem; /* ~1440px max width */
+}
+
+/* ---- text size setting ----------------------------------------------------------------------------------- */
+html {
+  font-size: 100%;
+}
+html[data-text='large'] {
+  font-size: 118.75%;
+}
+html[data-text='xlarge'] {
+  font-size: 137.5%;
+}
+
+/* ---- base ------------------------------------------------------------------------------------------------ */
+@layer base {
+  html {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    min-height: 100dvh;
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    overflow-x: hidden;
+    overflow-wrap: anywhere;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  /* Visible 2px focus ring in the accent colour, 3px offset, on everything focusable. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 3px;
+  }
+  ::selection {
+    background: var(--color-tint);
+    color: var(--color-ink);
+  }
+  button,
+  [role='button'] {
+    cursor: pointer;
+  }
+  button:disabled,
+  [aria-disabled='true'] {
+    cursor: not-allowed;
+  }
+}
+
+/* ---- components that need more than utilities ----------------------------------------------------------- */
+@layer components {
+  /* Every amount: Spectral, tabular lining figures; the ₹ at 0.75em weight 400 next to weight-500 digits. */
+  .amount {
+    font-family: var(--font-display);
+    font-variant-numeric: tabular-nums lining-nums;
+    font-feature-settings: 'tnum' 1, 'lnum' 1;
+    white-space: nowrap;
+  }
+  .amount-symbol {
+    font-size: 0.75em;
+    font-weight: 400;
+    margin-inline-end: 0.04em;
+  }
+  .amount-digits {
+    font-weight: 500;
+  }
+
+  /* Section eyebrows */
+  .eyebrow {
+    font-size: var(--text-eyebrow);
+    line-height: var(--text-eyebrow--line-height);
+    letter-spacing: var(--text-eyebrow--letter-spacing);
+    font-weight: var(--text-eyebrow--font-weight);
+    text-transform: uppercase;
+    color: var(--color-ink-2);
+  }
+
+  /* Ruled ledger rows: a hairline under each row, like a printed khata. */
+  .ruled > * + * {
+    border-top: 1px solid var(--color-line);
+  }
+
+  /* The hero mic. The ring breathes with the audio level written to --level (0..1) by the component. */
+  .mic {
+    --level: 0;
+    position: relative;
+    display: grid;
+    place-items: center;
+    border-radius: var(--radius-full);
+    background: var(--color-accent);
+    color: var(--color-on-accent);
+    box-shadow: var(--shadow-float);
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    transition:
+      transform 160ms var(--ease-out),
+      background-color 200ms var(--ease-out);
+  }
+  .mic::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: inherit;
+    border: 2px solid var(--color-accent);
+    opacity: 0;
+    transform: scale(1);
+    transition:
+      opacity 200ms var(--ease-out),
+      transform 90ms linear;
+    pointer-events: none;
+  }
+
+  .mic[data-state='listening']::before {
+    opacity: calc(0.35 + var(--level) * 0.65);
+    transform: scale(calc(1 + var(--level) * 0.06));
+  }
+  .mic[data-state='processing']::before {
+    opacity: 0.5;
+    border-style: dashed;
+    animation: mic-turn 2.4s linear infinite;
+  }
+  .mic[data-state='speaking']::before {
+    opacity: 0.45;
+    animation: mic-breathe 1.6s var(--ease-out) infinite;
+  }
+  .mic[data-state='error'] {
+    background: var(--color-surface);
+    color: var(--color-credit);
+    border: 2px solid var(--color-credit);
+  }
+  .mic[aria-disabled='true'] {
+    background: var(--color-tint);
+    color: var(--color-ink-2);
+    box-shadow: none;
+  }
+  .mic[aria-disabled='true'][data-state='speaking'] {
+    background: var(--color-accent);
+    color: var(--color-on-accent);
+    opacity: 0.85;
+  }
+
+  /* Bottom sheet (vaul) */
+  .sheet-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--kv-scrim);
+    z-index: 40;
+  }
+  .sheet-content {
+    position: fixed;
+    inset-inline: 0;
+    bottom: 0;
+    z-index: 50;
+    max-height: 92dvh;
+    display: flex;
+    flex-direction: column;
+    background: var(--color-surface);
+    color: var(--color-ink);
+    border-start-start-radius: var(--radius-sheet-lg);
+    border-start-end-radius: var(--radius-sheet-lg);
+    box-shadow: var(--shadow-sheet);
+    padding-bottom: env(safe-area-inset-bottom);
+    outline: none;
+  }
+  @media (min-width: 40rem) {
+    .sheet-content {
+      inset-inline: auto;
+      left: 50%;
+      width: min(36rem, 100vw);
+      translate: -50% 0;
+    }
+  }
+  .sheet-handle {
+    width: 2.5rem;
+    height: 0.25rem;
+    border-radius: var(--radius-full);
+    background: var(--color-line-strong);
+  }
+
+  /* Conversation fades out at the top edge (a mask, not a colour gradient). */
+  .fade-top {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 2.5rem);
+    mask-image: linear-gradient(to bottom, transparent 0, black 2.5rem);
+  }
+  .bubble {
+    border-radius: var(--radius-sheet) var(--radius-sheet) 0.25rem var(--radius-sheet);
+  }
+
+  .sr-only-focusable:not(:focus) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+@keyframes mic-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.25;
+  }
+  50% {
+    transform: scale(1.14);
+    opacity: 0.55;
+  }
+}
+@keyframes mic-turn {
+  to {
+    rotate: 1turn;
+  }
+}
+@keyframes row-in {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@utility animate-row-in {
+  animation: row-in 220ms var(--ease-out) both;
+}
+@utility animate-fade-in {
+  animation: fade-in 200ms var(--ease-out) both;
+}
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+@utility tabular {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* ---- reduced motion: fades only ------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+  .mic,
+  .mic::before {
+    transition: opacity 160ms linear !important;
+    transform: none !important;
+  }
+  .animate-row-in {
+    animation: fade-in 160ms linear both !important;
+  }
+}
+
+/* ---- Windows high contrast (forced colours) ------------------------------------------------------------- */
+@media (forced-colors: active) {
+  .mic {
+    border: 2px solid ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+    forced-color-adjust: none;
+  }
+  .mic[data-state='listening'] {
+    background: Highlight;
+    color: HighlightText;
+  }
+  .mic::before {
+    border-color: Highlight;
+  }
+  .sheet-content {
+    border: 2px solid CanvasText;
+  }
+  :focus-visible {
+    outline-color: Highlight;
+  }
+  .ruled > * + * {
+    border-top-color: CanvasText;
+  }
+}

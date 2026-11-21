@@ -1,16 +1,22 @@
 // Wires the microphone, the player, the WebSocket client and the store together.
 import { reduce, initialState } from './store.js';
 import { SessionClient, wsUrl } from './ws.js';
+import { normalizeLang } from './i18n.js';
 import { Player } from './audio/player.js';
 
+export function savedLang() {
+  try { return normalizeLang(localStorage.getItem('khata.lang')); } catch { return 'hi'; }
+}
+
 export function createController(onChange) {
-  let state = initialState;
+  let state = { ...initialState, lang: savedLang() };
   let ctx = null;
   let player = null;
   let client = null;
   let talking = false; // button held
   let finishing = null; // pending end-of-stream after release, or null
   let node = null;
+  let greetTimer = null;
   const listeners = new Set();
 
   const dispatch = (action) => {
@@ -26,7 +32,10 @@ export function createController(onChange) {
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
 
     /** Called from the Start tap: audio context, microphone, socket, hello. */
-    async start() {
+    async start(lang) {
+      lang = normalizeLang(lang);
+      try { localStorage.setItem('khata.lang', lang); } catch { /* storage unavailable */ }
+      dispatch({ type: 'set_lang', lang });
       ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
       await ctx.resume();
       player = new Player(ctx, (t) => dispatch({ type: 'first_sound', t }));
@@ -34,10 +43,16 @@ export function createController(onChange) {
       const code = new URLSearchParams(location.search).get('code');
       client = new SessionClient({
         url: wsUrl(location),
+        lang, // reused by every reconnect
         accessCode: code,
         onStatus: (status) => dispatch({ type: 'conn', status }),
         onMessage: (m) => {
           dispatch(m);
+          // Fallback so a failed greeting cannot lock the page.
+          if (m.type === 'ready' && !state.greeted) {
+            clearTimeout(greetTimer);
+            greetTimer = setTimeout(() => dispatch({ type: 'greeting_timeout' }), 6000);
+          }
           if (m.type === 'audio_start' && state.audioTurn === Number(m.turn_id)) player.begin(m.sample_rate);
           else if (m.type === 'audio_end' && m.turn_id != null && Number(m.turn_id) >= state.turnId) {
             m.cancelled ? player.stop() : player.end();
@@ -68,15 +83,20 @@ export function createController(onChange) {
         api.micReady = true;
       } catch (err) {
         api.micError = err && err.name === 'NotAllowedError'
-          ? 'Microphone ki ijaazat nahi mili. Type karein se bhi test kar sakte hain.'
-          : 'Microphone nahi chala (HTTPS chahiye). Type karein se test karein.';
+          ? 'micDenied'
+          : 'micFail';
       }
       dispatch({ type: 'mic' });
     },
 
     /** Button pressed: barge-in, then start streaming. */
     press() {
-      if (!api.micReady || talking || !client) return;
+      if (!api.micReady || talking || !client || !state.greeted) return;
+      ctx.resume(); // a locked screen or a phone call suspends the context
+      if (!client.isOpen) {
+        dispatch({ type: 'notice' });
+        return;
+      }
       if (finishing) finishing.done(); // a quick re-press: close the previous turn first
       player.stop();
       dispatch({ type: 'local_start' });
@@ -110,7 +130,12 @@ export function createController(onChange) {
     /** Typed input, same pipeline without speech recognition. */
     sendText(text) {
       const t = text.trim();
-      if (!t || !client) return;
+      if (!t || !client || !state.greeted) return;
+      ctx.resume();
+      if (!client.isOpen) {
+        dispatch({ type: 'notice' });
+        return;
+      }
       player.stop();
       dispatch({ type: 'local_start' });
       dispatch({ type: 'local_text', text: t });

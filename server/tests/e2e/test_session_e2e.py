@@ -42,6 +42,7 @@ async def stack():
         "LEDGER_DB": os.path.join(tmp.name, "khata.db"),
         "LEDGER_KEY": base64.b64encode(b"k" * 32).decode(),
         "SHOP_TZ": "Asia/Kolkata",
+        "CONFIRM_NEW_CUSTOMER": "0",  # the new-customer question is covered by tests/edge (E04, E09)
     }
     saved = {k: os.environ.get(k) for k in [*env, "ACCESS_CODE", "ADMIN_TOKEN"]}
     os.environ.update(env)
@@ -71,10 +72,10 @@ class Client:
         self.pending: list = []
 
     @classmethod
-    async def open(cls, stack, resume=None):
+    async def open(cls, stack, resume=None, lang="hi"):
         ws = await connect("ws" + stack["app_url"][4:] + "/ws/session", max_size=None)
         client = cls(ws, stack)
-        hello = {"type": "hello", "lang": "hi"}
+        hello = {"type": "hello", "lang": lang}
         if resume:
             hello["resume"] = resume
         await ws.send(json.dumps(hello))
@@ -88,7 +89,7 @@ class Client:
         raw = await asyncio.wait_for(self.ws.recv(), timeout)
         return raw if isinstance(raw, bytes) else json.loads(raw)
 
-    async def collect_turn(self, timeout=10.0, expect_audio=True):
+    async def collect_turn(self, timeout=10.0, expect_audio=True, min_turn=0):
         """Read messages until the turn has a result, its audio has ended and its timing has arrived."""
         out = {"msgs": [], "frames": 0, "result": None, "audio_start": None, "audio_end": None, "timing": None}
         deadline = asyncio.get_running_loop().time() + timeout
@@ -102,6 +103,8 @@ class Client:
                 continue
             out["msgs"].append(msg)
             t = msg["type"]
+            if t in ("result", "audio_start", "audio_end", "timing") and msg.get("turn_id", min_turn) < min_turn:
+                continue  # belongs to an earlier turn, for example a cancelled greeting
             if t == "ready":
                 self.session_id = msg["session_id"]
             elif t == "result":
@@ -133,8 +136,9 @@ class Client:
         audio = pcm_audio()
         for i in range(0, len(audio), CHUNK_BYTES):
             await self.ws.send(audio[i:i + CHUNK_BYTES])
+            await asyncio.sleep(0.01)  # audio arrives at roughly real-time cadence, as from a browser
         await self.ws.send(json.dumps({"type": "end"}))
-        return await self.collect_turn()
+        return await self.collect_turn(min_turn=1)
 
     async def close(self):
         await self.ws.close()
@@ -365,3 +369,155 @@ async def test_ping_pong(greeted):
         if isinstance(msg, dict) and msg["type"] == "pong":
             assert msg.get("t") == 7
             return
+
+
+# ---- behaviour added after the first review (CONTRACT 1.12, 1.13, 3.1, 3.2) -----------------------
+
+async def test_greeting_in_english_when_hello_lang_is_en(stack):
+    c = await Client.open(stack, lang="en")
+    try:
+        await c.script(tts_chunk_ms=5)
+        turn = await c.greet()
+        assert turn["result"]["reply_text"].startswith("Hello!") and "AI" in turn["result"]["reply_text"]
+    finally:
+        await c.close()
+
+
+async def test_disclosure_is_repeated_when_greeting_is_interrupted(stack):
+    """The app under test has its own TTS voice, so its greeting is never in the reply-audio cache and always
+    streams from the mock, slowly enough to be interrupted by the first button press."""
+    import uuid
+
+    from app.config import Settings
+
+    main = importlib.import_module("app.main")
+    with tempfile.TemporaryDirectory() as tmp:
+        settings = Settings.from_env({
+            "GNANI_BASE_URL": stack["mock_url"], "GNANI_API_KEY": "test-key",
+            "GNANI_TTS_VOICE": "TestVoice" + uuid.uuid4().hex[:8],
+            "LEDGER_DB": os.path.join(tmp, "khata.db"), "LEDGER_KEY": base64.b64encode(b"u" * 32).decode(),
+            "CONFIRM_NEW_CUSTOMER": "0",
+        })
+        app_url, stop_app = await serve_app(main.create_app(settings), lifespan="auto")
+        own = dict(stack, app_url=app_url)
+        c = None
+        try:
+            await own["mock"].post("/__mock/script", json={
+                "transcripts": ["lata ka 100 udhaar"], "tts_first_chunk_delay_ms": 400, "tts_chunk_ms": 60})
+            c = await Client.open(own)
+            while True:  # wait until the greeting has really started streaming
+                msg = await c.recv()
+                if isinstance(msg, bytes):
+                    break
+            await own["mock"].post("/__mock/script", json={
+                "transcripts": ["lata ka 100 udhaar"], "tts_first_chunk_delay_ms": 0, "tts_chunk_ms": 5})
+            await c.ws.send(json.dumps({"type": "start", "mode": "ptt"}))
+            audio = pcm_audio()
+            for i in range(0, len(audio), CHUNK_BYTES):
+                await c.ws.send(audio[i:i + CHUNK_BYTES])
+                await asyncio.sleep(0.01)
+            await c.ws.send(json.dumps({"type": "end"}))
+            turn = await c.collect_turn(min_turn=1)
+            assert turn["result"]["status"] == "ok"
+            greeting_end = [m for m in turn["msgs"] if m["type"] == "audio_end" and m.get("turn_id") == 0]
+            assert greeting_end and greeting_end[0].get("cancelled") is True
+            log = (await own["mock"].get("/__mock/log")).json()["tts_requests"]
+            assert "एआई" in log[-1]["text"]  # the Devanagari word for "AI" is in the spoken reply
+            # once a reply has been heard to the end the disclosure is not repeated
+            await c.speak("lata ka 50 udhaar")
+            log = (await own["mock"].get("/__mock/log")).json()["tts_requests"]
+            assert "एआई" not in log[-1]["text"]
+        finally:
+            await own["mock"].post("/__mock/script", json={"tts_first_chunk_delay_ms": 0, "tts_chunk_ms": 5})
+            if c:
+                await c.close()
+            await stop_app()
+
+
+async def test_whole_utterance_sent_in_one_burst_still_gets_the_entry(greeted, stack):
+    c = greeted
+    await c.script(transcripts=["burst ka 275 udhaar"])
+    await c.ws.send(json.dumps({"type": "start", "mode": "ptt"}))
+    audio = pcm_audio()
+    for i in range(0, len(audio), CHUNK_BYTES):
+        await c.ws.send(audio[i:i + CHUNK_BYTES])  # no pacing: the whole utterance arrives at once
+    await c.ws.send(json.dumps({"type": "end"}))
+    turn = await c.collect_turn(min_turn=1)
+    assert turn["result"]["status"] == "ok" and turn["result"]["entries"][0]["amount"] == 275
+    customers, _ = await ledger(stack)
+    assert balance_of(customers, "burst") == [275]
+
+
+async def test_nahi_with_two_entries_asks_which_one(greeted, stack):
+    c = greeted
+    first = await c.speak(["dinesh ka 340 udhaar", "dinesh ne 200 diye"])
+    assert [e["amount"] for e in first["result"]["entries"]] == [340, 200]
+    turn = await c.speak("nahi 430")
+    result = turn["result"]
+    assert result["status"] == "needs_clarification" and result["reason"] == "unclear_correction"
+    assert result["entries"] == [] and "340" in result["question"] and "200" in result["question"]
+    customers, _ = await ledger(stack)
+    assert balance_of(customers, "dinesh") == [140]
+
+
+async def test_old_amount_correction_picks_the_right_entry(greeted, stack):
+    c = greeted
+    await c.speak(["hari ka 340 udhaar", "hari ne 200 diye"])
+    turn = await c.speak("340 nahi 430")
+    result = turn["result"]
+    assert result["status"] == "ok" and result["action"] == "amend"
+    old, new = result["entries"]
+    assert old["reversed"] is True and old["amount"] == 340 and old["kind"] == "credit"
+    assert new["amount"] == 430 and new["kind"] == "credit"
+    customers, _ = await ledger(stack)
+    assert balance_of(customers, "hari") == [230]
+
+
+async def test_english_sentence_gets_english_reply_and_hinglish_switches_back(greeted, stack):
+    c = greeted
+    en = await c.speak("Lakshmi paid five hundred rupees")
+    assert en["result"]["status"] == "ok" and en["result"]["lang"] == "en"
+    assert en["result"]["entries"][0]["kind"] == "payment" and en["result"]["entries"][0]["amount"] == 500
+    assert "Received ₹500 from Lakshmi" in en["result"]["reply_text"]
+    log = (await stack["mock"].get("/__mock/log")).json()
+    assert log["tts_requests"][-1]["language"] == "en-IN"
+    hi = await c.speak("lakshmi ka 100 udhaar")
+    assert hi["result"]["lang"] == "hi"
+    assert "udhaar" in hi["result"]["reply_text"]
+    log = (await stack["mock"].get("/__mock/log")).json()
+    assert log["tts_requests"][-1]["language"] == "hi-IN"
+
+
+async def test_first_person_diye_is_a_credit_for_the_carried_customer(greeted, stack):
+    c = greeted
+    await c.speak("tarun ka 100 udhaar")
+    turn = await c.speak("Maine 455 rupaye diye")
+    entry = turn["result"]["entries"][0]
+    assert turn["result"]["status"] == "ok"
+    assert entry["kind"] == "credit" and entry["amount"] == 455 and entry["customer"]["display"].lower() == "tarun"
+    customers, _ = await ledger(stack)
+    assert balance_of(customers, "tarun") == [555]
+
+
+async def test_relation_is_not_answered_with_the_customers_own_balance(greeted, stack):
+    c = greeted
+    await c.speak("mukesh ka 700 udhaar")
+    turn = await c.speak("mukesh ki biwi ka khata")
+    result = turn["result"]
+    assert result["entries"] == []
+    assert "700" not in result["reply_text"]
+    customers, _ = await ledger(stack)
+    assert balance_of(customers, "mukesh") == [700]
+
+
+async def test_natural_answer_resolves_the_direction_question(greeted, stack):
+    c = greeted
+    q = await c.speak("ganesh 500")
+    assert q["result"]["status"] == "needs_clarification" and q["result"]["reason"] == "ambiguous_direction"
+    assert q["result"]["entries"] == []
+    ans = await c.speak("ganesh ne diye")
+    entry = ans["result"]["entries"][0]
+    assert ans["result"]["status"] == "ok"
+    assert entry["kind"] == "payment" and entry["amount"] == 500
+    customers, _ = await ledger(stack)
+    assert balance_of(customers, "ganesh") == [-500]

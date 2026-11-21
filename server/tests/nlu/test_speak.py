@@ -2,7 +2,8 @@
 import unicodedata
 
 import pytest
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from nlu.numbers import parse_number
 from nlu.speak import MAX_SPOKEN, number_to_words
@@ -76,3 +77,26 @@ def test_out_of_range_raises(bad):
 def test_unknown_script_raises():
     with pytest.raises(ValueError):
         number_to_words(5, "kannada")
+
+
+@settings(max_examples=1500, deadline=None)
+@given(st.integers(min_value=1, max_value=MAX_SPOKEN))
+def test_english_words_parse_back(n):
+    assert parse_number(number_to_words(n, "en")) == n
+
+
+@pytest.mark.parametrize("n,text", [
+    (1500, "one thousand five hundred"),
+    (125000, "one lakh twenty five thousand"),
+    (340, "three hundred forty"),
+    (40, "forty"),
+    (19, "nineteen"),
+    (100, "one hundred"),
+    (9_999_999, "ninety nine lakh ninety nine thousand nine hundred ninety nine"),
+])
+def test_english_spot_checks(n, text):
+    assert number_to_words(n, "en") == text
+
+
+def test_english_zero():
+    assert number_to_words(0, "en") == "zero"

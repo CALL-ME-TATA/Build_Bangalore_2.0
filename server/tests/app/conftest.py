@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 from datetime import date, datetime
 
 import pytest
@@ -29,18 +30,86 @@ def _ev(kind, customer, amount, today, **extra):
     return {"kind": kind, "customer": customer, "amount": amount, "date": today.isoformat(), **extra}
 
 
+def _customer(ctx, key):
+    return next((c for c in ctx.get("customers") or [] if c["name"] == key), None)
+
+
+def _v12(u: str, today: date, ctx: dict) -> dict | None:
+    """Canned results of the CONTRACT 1.14 shapes (v1.2)."""
+    pending = ctx.get("pending") or {}
+    if u == "ramesh ka 999999999999 udhaar":  # a result the server cannot voice or save
+        return {"status": "ok", "action": "append", "lang": "hi", "events": [_ev("credit", "ramesh", 999999999999, today)]}
+    if u in ("haan", "yes") and pending.get("reason") in ("confirm_entry", "plausibility", "new_customer"):
+        if pending.get("action") == "reminder":
+            return {"status": "ok", "action": "reminder", "customer": pending.get("customer"),
+                    "customer_id": pending.get("customer_id")}
+        return {"status": "ok", "action": pending.get("action", "append"), "events": pending.get("events") or []}
+    if u == "haan":
+        return {"status": "rejected", "reason": "no_question"}
+    rejected = {"ramesh kal dega": "future", "ramesh ne nahi diya": "negated", "kiraya 500 diya": "out_of_scope",
+                "ek crore crore": "too_large", "minus 50": "invalid_number"}
+    if u in rejected:
+        return {"status": "rejected", "reason": rejected[u], "lang": "hi"}
+    if u == "mohan ko 200 udhaar":
+        c = _customer(ctx, "mohan")
+        if c:
+            return {"status": "ok", "action": "append", "events": [_ev("credit", "mohan", 200, today, customer_id=c["id"])]}
+        ev = _ev("credit", "mohan", 200, today, new_customer=True)
+        if (ctx.get("limits") or {}).get("confirm_new_customer"):
+            return {"status": "needs_clarification", "reason": "new_customer", "question": "Mohan naya hai? (roman)",
+                    "candidates": [], "pending": {"reason": "new_customer", "action": "append", "events": [ev]}}
+        return {"status": "ok", "action": "append", "events": [ev]}
+    if u == "ramesh":
+        c = _customer(ctx, "ramesh")
+        if c is None:
+            return {"status": "rejected", "reason": "not_ledger"}
+        ev = {"customer": "ramesh", "customer_id": c["id"]}
+        return {"status": "needs_clarification", "reason": "missing_amount", "question": "Ramesh ka kya likhun?",
+                "pending": {"reason": "missing_amount", "action": "append", "events": [ev]}}
+    if u == "ramesh ko 2 kilo chawal udhaar":
+        ev = {"kind": "credit", "customer": "ramesh", "date": today.isoformat()}
+        return {"status": "needs_clarification", "reason": "missing_amount", "question": "Kitne ka?",
+                "quantity": True, "pending": {"reason": "missing_amount", "action": "append", "events": [ev]}}
+    settle = {"ramesh ne poora de diya": ("settle", "payment"), "ramesh ka baaki chhod do": ("writeoff", "writeoff")}
+    if u in settle:
+        ctype, kind = settle[u]
+        c = _customer(ctx, "ramesh")
+        bal = c.get("balance") if c else None
+        if not c or not bal or bal <= 0:
+            return {"status": "ok", "action": "query", "query": {"type": "balance", "customer": "ramesh"}}
+        ev = _ev(kind, "ramesh", bal, today, customer_id=c["id"])
+        confirm = {"type": ctype, "balance": bal}
+        return {"status": "needs_clarification", "reason": "confirm_entry", "confirm": confirm,
+                "question": "(roman question)",
+                "pending": {"reason": "confirm_entry", "action": "append", "events": [ev], "confirm": confirm}}
+    return None
+
+
 class FakeParser:
     """Canned parser results shaped as CONTRACT 1.2, keyed by lowercase transcript."""
 
     def __init__(self) -> None:
         self.calls: list[dict] = []
+        # Extra canned results, keyed by lowercase transcript: a dict, or a function (today, ctx) -> dict.
+        self.canned: dict = {}
 
     def __call__(self, utterance: str, *, today: date, ctx: dict | None = None) -> dict:
         self.calls.append({"utterance": utterance, "ctx": ctx})
         u = utterance.lower().strip()
         ctx = ctx or {}
+        if u in self.canned:
+            item = self.canned[u]
+            return copy.deepcopy(item(today, ctx) if callable(item) else item)
+        v12 = _v12(u, today, ctx)
+        if v12 is not None:
+            return v12
         if u == "ramesh ka 340 udhaar":
-            return {"status": "ok", "action": "append", "events": [_ev("credit", "ramesh", 340, today)]}
+            return {"status": "ok", "action": "append", "lang": "hi", "events": [_ev("credit", "ramesh", 340, today)]}
+        if u == "sunita paid 150":
+            return {"status": "ok", "action": "append", "lang": "en",
+                    "events": [_ev("payment", "sunita", 150, today)]}
+        if u == "yes":  # a bare answer carries no `lang`
+            return {"status": "rejected", "reason": "not_ledger"}
         if u == "sunita ne 150 diye":
             return {"status": "ok", "action": "append", "events": [_ev("payment", "sunita", 150, today)]}
         if u == "ramesh 340":
@@ -59,7 +128,7 @@ class FakeParser:
             return {"status": "ok", "action": "amend", "target": "last", "events": [ev]}
         if u == "undo karo":
             if not ctx.get("last_event"):
-                return {"status": "rejected", "reason": "no_last_event"}
+                return {"status": "rejected", "reason": "no_last_event", "action": "undo"}
             return {"status": "ok", "action": "undo", "target": "last"}
         if u == "ramesh ka total":
             return {"status": "ok", "action": "query", "query": {"type": "balance", "customer": "ramesh"}}

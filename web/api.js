@@ -1,7 +1,8 @@
 // Read-only HTTP calls for the Khata screen.
 
 async function getJson(path) {
-  const res = await fetch(path, { cache: 'no-store' });
+  const code = new URLSearchParams(location.search).get('code');
+  const res = await fetch(path, { cache: 'no-store', headers: code ? { 'X-Access-Code': code } : {} });
   if (!res.ok) throw new Error(`${path}: ${res.status}`);
   return res.json();
 }

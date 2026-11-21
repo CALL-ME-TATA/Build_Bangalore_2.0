@@ -106,6 +106,7 @@ async def main(args) -> int:
                     await ws.send(json.dumps({"type": "start", "mode": "ptt"}))
                     for j in range(0, len(audio), 640):
                         await ws.send(audio[j:j + 640])
+                        await asyncio.sleep(0.01)  # near real-time cadence, as from a browser
                     sent_end = time.perf_counter()
                     await ws.send(json.dumps({"type": "end"}))
                     turn = await read_turn(ws)

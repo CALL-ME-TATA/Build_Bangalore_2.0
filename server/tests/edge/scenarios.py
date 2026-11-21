@@ -1,0 +1,51 @@
+"""Turns that between them produce every kind of reply, used by the reply-length and tone tests."""
+from __future__ import annotations
+
+# (name, sentences said first, sentence whose reply is checked)
+SCENARIOS: list[tuple[str, list[str], str]] = [
+    ("save credit", [], "Ramesh ka 340 udhaar"),
+    ("save payment", [], "Sunita ne 200 diye"),
+    ("save dated", [], "Ramesh ne kal 200 diye"),
+    ("two entries", [], "Ramesh ka 340 udhaar, kal 200 diya tha"),
+    ("new customer", [], "Mahesh ka 340 udhaar"),
+    ("amend", ["Ramesh ka 340 udhaar"], "nahi, 430"),
+    ("undo", ["Ramesh ka 340 udhaar"], "undo karo"),
+    ("no undo", [], "undo karo"),
+    ("no amend", [], "nahi, 430"),
+    ("confusable", [], "Ramesh ka teen chaar sau udhaar"),
+    ("missing amount", [], "Ramesh ne paise diye"),
+    ("missing customer", [], "500 diya"),
+    ("direction", [], "Sunita ka 500"),
+    ("plausibility", [], "Ramesh ka 51000 udhaar"),
+    ("unclear date", [], "Ramesh ne pichle hafte 200 diye"),
+    ("unclear correction", [], "nahi"),
+    ("cancelled", ["Sunita ka 500"], "cancel"),
+    ("rejected", [], "asdf qwer zxcv"),
+    ("future", [], "Ramesh ko 500 dena hai"),
+    ("negated", [], "Sunita ne nahi diya"),
+    ("out of scope", [], "Dukaan ka kiraya 8000"),
+    ("too large", [], "Ramesh ka 5 crore udhaar"),
+    ("no question", [], "haan"),
+    ("balance", [], "Ramesh ka total?"),
+    ("credit total", [], "Aaj kitna udhaar gaya?"),
+    ("daily summary", [], "Aaj ka hisaab batao"),
+    ("top dues", [], "Kis kis ka baaki hai?"),
+    ("computed", [], "Ramesh ka bill 450 hai, 200 diya, baaki udhaar"),
+    ("settle", [], "Ramesh ne poora de diya"),
+    ("writeoff", [], "Ramesh ka baaki chhod do"),
+    ("overpayment", [], "Ramesh ne 1000 diye"),
+    ("quantity", [], "Ramesh ko 2 kilo chawal udhaar"),
+    ("hearsay", [], "Ramesh bol raha tha 340 udhaar"),
+    ("duplicate", ["Ramesh ne 100 diye"], "Ramesh ne 100 diye"),
+    ("outstanding", [], "Total udhaar kitna hai"),
+    ("english save", [], "Sunita paid 50"),
+    ("english credit", [], "Ramesh took 500 on credit"),
+    ("english balance", [], "what is Ramesh's balance"),
+    ("english undo", ["Ramesh ka 340 udhaar"], "undo that"),
+    ("english nothing to undo", [], "undo that"),
+    ("english question", [], "Sunita 500"),
+    ("reminder", [], "Ramesh ko reminder bhejo"),
+]
+
+# Sentences said in order in one shop, to collect every reply text (tone checks).
+TONE_SENTENCES = [s for _, pre, s in SCENARIOS for s in [*pre, s]]

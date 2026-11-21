@@ -16,7 +16,7 @@ import re
 import unicodedata
 
 _DEVA_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
-_ZERO_WIDTH = dict.fromkeys(map(ord, "​‌‍﻿"), None)
+_ZERO_WIDTH = dict.fromkeys(map(ord, "\u200b‌‍﻿"), None)
 
 _CONSONANTS = {
     "क": "k", "ख": "kh", "ग": "g", "घ": "gh", "ङ": "n",
@@ -56,7 +56,7 @@ def is_devanagari(word: str) -> bool:
 class _Unit:
     """One written syllable: a consonant cluster (possibly empty) and its vowel."""
 
-    __slots__ = ("cons", "ncons", "vowel", "inherent", "nasal", "coda", "base")
+    __slots__ = ("base", "coda", "cons", "inherent", "nasal", "ncons", "vowel")
 
     def __init__(self, cons: str, vowel: str | None, inherent: bool, base: str = ""):
         self.cons = cons

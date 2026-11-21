@@ -14,3 +14,4 @@ dist/
 .hypothesis/
 .ruff_cache/
 
+.tanstack/

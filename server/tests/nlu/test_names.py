@@ -87,3 +87,29 @@ def test_tag_matches(spoken, stored, ok):
 def test_non_string_inputs_are_safe():
     assert name_key(None) == ""  # type: ignore[arg-type]
     assert phonetic_key(None) == ""  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("a,b,same", [
+    ("rameysh", "ramesh", True),
+    ("suneeta", "sunita", True),
+    ("ramesh sharma", "ramesh sharma", True),
+    ("sunit", "sunita", False),
+    ("kamal", "kamala", False),
+    ("rajan", "ranjan", False),
+    ("rakesh sharma", "ramesh sharma", False),
+    ("ramesh", "ramesh sharma", False),
+    ("ramesh", "suresh", False),
+    ("", "ramesh", False),
+])
+def test_same_person(a, b, same):
+    from nlu.names import same_person
+    assert same_person(a, b) is same
+    assert same_person(b, a) is same
+
+
+def test_honorific_alone_is_a_name_only_when_asked():
+    from nlu.names import split_tokens
+    assert split_tokens(["chacha"]) == ([], [])
+    assert split_tokens(["chacha"], honorific_name=True) == (["chacha"], [])
+    assert split_tokens(["lala", "ji"], honorific_name=True) == (["lala"], [])
+    assert split_tokens(["sharma", "ji"], honorific_name=True) == (["sharma"], [])

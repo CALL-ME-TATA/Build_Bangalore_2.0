@@ -5,13 +5,17 @@
 // is set and every message for the previous turn id is dropped until a newer turn
 // id arrives.
 
+import { t, normalizeLang } from './i18n.js';
+
 export const initialState = {
+  lang: 'hi', // language of the fixed labels: the chosen one, then the language of the latest result
   conn: 'idle', // idle | connecting | open | reconnecting | closed
   sessionId: null,
   turnId: 0,
   barged: false,
   phase: 'idle',
   transcript: '',
+  greeted: false, // true after the greeting audio ended uncancelled, or after the fallback timeout
   typedText: null, // sentence sent from the Type box, shown as the transcript of its turn
   transcriptFinal: false, // false while the text is still a partial
   result: null, // { status, action, reason, entries, replyText, question, traceId }
@@ -61,7 +65,17 @@ export function reduce(s, m) {
       if (s.audioTurn == null || s.releaseAt == null || s.clientMs != null) return s;
       return { ...s, clientMs: m.t - s.releaseAt };
     case 'ready':
+      // A different session id (server restart, expired resume) starts again at turn 0.
+      if (s.sessionId && s.sessionId !== m.session_id) {
+        return { ...s, sessionId: m.session_id, turnId: 0, barged: false, audioTurn: null, phase: 'idle', greeted: false, result: null, timing: null };
+      }
       return { ...s, sessionId: m.session_id };
+    case 'greeting_timeout':
+      return { ...s, greeted: true };
+    case 'notice':
+      return { ...s, error: t(s.lang, 'noConn') };
+    case 'set_lang':
+      return { ...s, lang: normalizeLang(m.lang) };
     case 'pong':
       return s;
     default:
@@ -82,6 +96,7 @@ export function reduce(s, m) {
       return {
         ...s,
         resultCount: s.resultCount + 1,
+        lang: m.lang ? normalizeLang(m.lang) : s.lang,
         result: {
           status: m.status,
           action: m.action,
@@ -95,7 +110,12 @@ export function reduce(s, m) {
     case 'audio_start':
       return { ...s, audioTurn: Number(m.turn_id), phase: 'speaking' };
     case 'audio_end':
-      return { ...s, audioTurn: null, phase: s.phase === 'speaking' ? 'idle' : s.phase };
+      return {
+        ...s,
+        audioTurn: null,
+        phase: s.phase === 'speaking' ? 'idle' : s.phase,
+        greeted: s.greeted || !m.cancelled,
+      };
     case 'timing':
       return { ...s, timing: { traceId: m.trace_id || null, ms: m.ms || {} } };
     case 'error':

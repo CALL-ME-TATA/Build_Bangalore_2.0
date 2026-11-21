@@ -145,11 +145,24 @@ def test_seed_adds_synthetic_customers(ledger, settings):
 def test_reminders_only_for_opted_in_customers(ledger):
     apply_events(ledger, [ev("credit", "ramesh", 340), ev("credit", "sunita", 500)])
     r = ledger.find_customer(key="ramesh")["id"]
-    assert ledger.queue_reminders(now(), lambda n, a: f"{n} {a}") == []
+    noon = datetime(2026, 11, 21, 12, 0).astimezone()
+    assert ledger.queue_reminders(noon) == []
     ledger.set_reminder_opt_in(r, True, "98765 43210")
-    queued = ledger.queue_reminders(now(), lambda n, a: f"Namaste {n}, {a}")
+    queued = ledger.queue_reminders(noon)
     assert len(queued) == 1
-    box = ledger.outbox()
-    assert box[0]["customer"]["display"] == "Ramesh"
+    box = ledger.outbox(noon, lambda n, a, lang: f"Namaste {n}, {a}")
+    assert box[0]["customer"]["display"] == "Ramesh" and box[0]["message"] == "Namaste Ramesh, 340"
     assert box[0]["wa_link"].startswith("https://wa.me/919876543210?text=")
-    assert ledger.queue_reminders(now(), lambda n, a: "x") == []
+    assert ledger.queue_reminders(noon) == []
+
+
+def test_same_name_customers_are_labelled_with_first_tag(ledger):
+    apply_events(ledger, [ev("credit", "ramesh", 280, new_customer=True, tags=["chai wale"])])
+    c1 = ledger.find_customer(key="ramesh")["id"]
+    assert ledger.label(c1) == "Ramesh"  # unique name keeps the plain name even with tags
+    out = apply_events(ledger, [ev("credit", "ramesh", 50, new_customer=True, tags=["gali number 3"])])
+    assert out.saved[0]["customer"] == "Ramesh gali number 3" and out.saved[0]["new_customer"] is True
+    assert ledger.label(c1) == "Ramesh chai wale"
+    assert ledger.top_dues(3) == [("Ramesh chai wale", 280), ("Ramesh gali number 3", 50)]
+    undone = ledger.apply({"action": "undo"}, now=now(), session_id="sess0001")
+    assert undone.reversed[0]["customer"] == "Ramesh gali number 3"

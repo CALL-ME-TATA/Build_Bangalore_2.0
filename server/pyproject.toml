@@ -23,6 +23,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["nlu*", "app*", "mock_gnani*"]
 
+[tool.setuptools.package-data]
+nlu = ["vocab/*.json"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]

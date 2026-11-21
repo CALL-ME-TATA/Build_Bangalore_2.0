@@ -4,7 +4,8 @@ import time
 from datetime import date
 
 import pytest
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from nlu.parser import _parse, parse
 
@@ -67,7 +68,7 @@ CASES = [
     ("dir-ask-ko-wapas", "Ramesh ko 100 wapas diya", None, ask("ambiguous_direction")),
     ("dir-ask-ko-payment", "Ramesh ko 100 payment kiya", None, ask("ambiguous_direction")),
     ("dir-ask-credit-word", "Ramesh ko 200 credit kar do", None, ask("ambiguous_direction")),
-    ("dir-ask-dene-hain", "Ramesh ko 200 dene hain", None, ask("ambiguous_direction")),
+    ("dir-future-dene-hain", "Ramesh ko 200 dene hain", None, rej("future")),
     ("dir-ask-baaki", "Ramesh ke 500 rupaye baaki hain", None, ask("ambiguous_direction")),
     ("dir-ask-se-udhaar-liya", "Ramesh se 200 udhaar liya", None, ask("ambiguous_direction")),
     ("dir-ask-name-amount", "Ramesh 200", None, ask("ambiguous_direction")),

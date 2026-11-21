@@ -389,3 +389,134 @@ async def test_tts_connection_level_request_id_and_second_complete(mock):
             assert completes[1]["request_id"] == msgs[0]["request_id"]
             ids.append(msgs[0]["request_id"])
     assert ids[0] == ids[1]
+
+
+async def _read_until(ws, kinds):
+    msgs = []
+    while True:
+        msg = await recv_json(ws)
+        msgs.append(msg)
+        if msg["type"] in kinds:
+            return msgs
+
+
+@pytest.mark.parametrize("partials", [False, True])
+async def test_every_message_of_an_utterance_shares_one_id_and_each_press_gets_a_new_one(mock, partials):
+    await mock.script(transcripts=["pehla vaakya", "doosra vaakya"], partial_interval_ms=0)
+    extra = {"x-partials": "true"} if partials else {}
+    final_kind = "final_transcript" if partials else "transcript"
+    async with await stt_connect(mock, **extra) as ws:
+        await recv_json(ws)
+        ids = []
+        for _ in range(2):
+            await send_utterance(ws, frames=8)
+            msgs = await _read_until(ws, {final_kind})
+            utterance_msgs = [m for m in msgs if m["type"] != "processing"]
+            assert utterance_msgs[0]["type"] == "speech_start"
+            these = {m["utterance_id"] for m in utterance_msgs}
+            assert len(these) == 1, utterance_msgs
+            ids.append(these.pop())
+    assert ids[0] != ids[1]
+
+
+async def test_partials_never_precede_speech_start(mock):
+    await mock.script(transcripts=["ramesh ka 340 udhaar"], partial_interval_ms=0)
+    async with await stt_connect(mock, **{"x-partials": "true"}) as ws:
+        await recv_json(ws)
+        for _ in range(2):
+            await ws.send(FRAME)
+        with pytest.raises(asyncio.TimeoutError):
+            await recv_json(ws, timeout=0.3)  # no speech_start yet, so no partial either
+        await ws.send(FRAME)
+        await ws.send(FRAME)
+        msgs = await _read_until(ws, {"partial_transcript"})
+    assert msgs[0]["type"] == "speech_start"
+    assert msgs[-1]["utterance_id"] == msgs[0]["utterance_id"]
+
+
+# ---- scripted turns: silence, missing transcript, partials, failing text-to-speech ----------------
+
+async def test_silent_turn_sends_nothing_and_is_consumed(mock):
+    await mock.script(transcripts=[{"silence": True}, "ramesh ka 340 udhaar"])
+    async with await stt_connect(mock) as ws:
+        await recv_json(ws)
+        await send_utterance(ws, frames=8)
+        with pytest.raises(asyncio.TimeoutError):
+            await recv_json(ws, timeout=0.4)  # no speech_start, processing or transcript
+        await send_utterance(ws, frames=8)
+        msgs = await _read_until(ws, {"transcript"})
+    assert msgs[-1]["text"] == "ramesh ka 340 udhaar"
+    assert [m["type"] for m in msgs][0] == "speech_start"
+
+
+async def test_turn_without_transcript_starts_speech_but_never_finishes(mock):
+    await mock.script(transcripts=[{"no_transcript": True}])
+    async with await stt_connect(mock) as ws:
+        await recv_json(ws)
+        await send_utterance(ws, frames=8)
+        kinds = []
+        with pytest.raises(asyncio.TimeoutError):
+            while True:
+                kinds.append((await recv_json(ws, timeout=0.6))["type"])
+    assert kinds == ["speech_start", "processing"]
+
+
+async def test_scripted_partials_precede_the_final_transcript(mock):
+    await mock.script(transcripts=[{"partials": ["34", "340"], "text": "3400"}])
+    async with await stt_connect(mock, **{"x-partials": "true"}) as ws:
+        await recv_json(ws)
+        await send_utterance(ws, frames=8)
+        msgs = await _read_until(ws, {"final_transcript"})
+    partials = [m for m in msgs if m["type"] == "partial_transcript"]
+    assert [p["text"] for p in partials] == ["34", "340"]
+    assert [p["seq"] for p in partials] == [1, 2]
+    assert msgs[-1]["text"] == "3400"
+    assert len({m["utterance_id"] for m in msgs if "utterance_id" in m}) == 1
+
+
+async def test_scripted_partials_are_not_sent_without_the_partials_header(mock):
+    await mock.script(transcripts=[{"partials": ["34", "340"], "text": "3400"}])
+    async with await stt_connect(mock) as ws:
+        await recv_json(ws)
+        await send_utterance(ws, frames=8)
+        msgs = await _read_until(ws, {"transcript"})
+    assert not [m for m in msgs if m["type"] == "partial_transcript"]
+    assert msgs[-1]["text"] == "3400"
+
+
+async def test_tts_fail_error_mode_keeps_socket_open_and_counts_down(mock):
+    await mock.script(tts_fail=1)
+    async with await tts_connect(mock) as ws:
+        await ws.send(json.dumps(tts_request("pehla")))
+        failed = await collect_reply(ws)
+        assert failed[-1]["type"] == "error"
+        assert not [m for m in failed if m["type"] == "audio"]
+        await ws.send(json.dumps(tts_request("doosra")))
+        ok = await collect_reply(ws)
+    assert [m for m in ok if m["type"] == "audio"]
+    log = await mock.log()
+    assert log["tts_requests"][0]["failed"] == "error"
+    assert "failed" not in log["tts_requests"][1]
+
+
+async def test_tts_fail_close_mode_closes_the_socket(mock):
+    await mock.script(tts_fail=1, tts_fail_mode="close")
+    async with await tts_connect(mock) as ws:
+        await ws.send(json.dumps(tts_request("pehla")))
+        with pytest.raises(Exception) as exc:
+            await recv_json(ws)
+    assert "1011" in str(exc.value) or "close" in str(exc.value).lower()
+
+
+async def test_script_rejects_unknown_tts_fail_mode(mock):
+    with pytest.raises(Exception):
+        await mock.script(tts_fail=1, tts_fail_mode="explode")
+
+
+async def test_reset_clears_tts_failure_script(mock):
+    await mock.script(tts_fail=3, tts_fail_mode="close")
+    await mock._http.post("/__mock/reset")
+    async with await tts_connect(mock) as ws:
+        await ws.send(json.dumps(tts_request("theek")))
+        msgs = await collect_reply(ws)
+    assert [m for m in msgs if m["type"] == "audio"]

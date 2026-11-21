@@ -49,8 +49,22 @@ def main() -> None:
     parser.add_argument("--live", action="store_true", help="use the real Gnani API Platform (key from .env)")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--db", help="ledger database file for this run (overrides LEDGER_DB), e.g. data/demo/khata.db")
+    parser.add_argument("--web", help="folder to serve as the web app (overrides WEB_DIR), e.g. web or frontend/dist")
+    parser.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
+                        help="set a configuration variable for this run, e.g. --set CONFIRM_NEW_CUSTOMER=0 (repeatable)")
     args = parser.parse_args()
     os.chdir(ROOT)
+    # Values given here win over .env, because .env never overrides a variable that is already set.
+    if args.db:
+        os.environ["LEDGER_DB"] = args.db
+    if args.web:
+        os.environ["WEB_DIR"] = args.web
+    for pair in args.set:
+        name, sep, value = pair.partition("=")
+        if not sep or not name.strip():
+            parser.error(f"--set needs NAME=VALUE, got {pair!r}")
+        os.environ[name.strip()] = value
     asyncio.run(run(args))
 
 

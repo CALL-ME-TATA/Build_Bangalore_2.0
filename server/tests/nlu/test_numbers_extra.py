@@ -36,7 +36,8 @@ def test_devanagari_table_round_trips_through_the_romaniser():
     # digits with units, mixed scripts
     ("2 hazaar", 2000), ("1.5 lakh", 150000), ("2.5 hazaar", 2500), ("do hazaar 500", 2500),
     ("teen sau 40", 340), ("दो हज़ार पाँच सौ", 2500), ("तीन सौ chaalis", 340), ("₹ 1,25,000", 125000),
-    ("rs 500", 500), ("500 rs", 500), ("पाँच सौ रुपये", 500), ("३,४०", None),
+    ("rs 500", 500), ("500 rs", 500), ("पाँच सौ रुपये", 500), ("३,४०", 340), ("1,2,3", 123), ("ek crore", 10000000),
+    ("2k", 2000), ("2.5k", 2500), ("four three zero", 430), ("char teen shunya", 430), ("rs500", 500),
     # English
     ("twelve fifty", 1250), ("one hundred", 100), ("ninety nine", 99), ("two thousand three hundred and ten", 2310),
     # zero
@@ -51,8 +52,8 @@ def test_more_forms(text, value):
     "saade sau", "dedh", "sawa", "paune", "dhai paanch", "saade dhai sau", "dedh sau pachaas",
     "teen chaalis",  # Hindi has no "three forty" shortcut
     "do teen sau", "sau sau", "hazaar sau", "lakh hazaar sau", "do hazaar pandrah sau",
-    "340.5", "1,2,3", "three five", "saade 300",
-    "ek crore", "Ramesh 340", "340 udhaar", None, 340,
+    "340.5", "three five", "saade 300", "2.0005k", "teen chaar",
+    "Ramesh 340", "340 udhaar", None, 340,
 ])
 def test_not_one_whole_amount(text):
     assert parse_number(text) is None

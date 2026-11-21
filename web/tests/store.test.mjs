@@ -139,3 +139,64 @@ test('a typed sentence is shown as the final transcript, also after the turn sta
   s = run([{ type: 'local_start' }, { type: 'state', turn_id: 3, state: 'listening' }], s);
   assert.equal(s.transcript, '');
 });
+
+test('a different session id resets the turn counters', () => {
+  let s = run([
+    { type: 'ready', session_id: 'A' },
+    { type: 'state', turn_id: 5, state: 'speaking' },
+    { type: 'audio_start', turn_id: 5, sample_rate: 24000 },
+    { type: 'local_start' },
+  ]);
+  assert.equal(s.turnId, 5);
+  s = reduce(s, { type: 'ready', session_id: 'B' });
+  assert.equal(s.turnId, 0);
+  assert.equal(s.barged, false);
+  assert.equal(s.audioTurn, null);
+  assert.equal(s.greeted, false);
+  s = reduce(s, { type: 'result', turn_id: 1, status: 'ok', action: 'greeting', entries: [], reply_text: 'Namaste' });
+  assert.equal(s.result.replyText, 'Namaste');
+});
+
+test('the same session id on resume keeps the turn counters', () => {
+  const s = run([{ type: 'ready', session_id: 'A' }, { type: 'state', turn_id: 4, state: 'idle' }, { type: 'ready', session_id: 'A' }]);
+  assert.equal(s.turnId, 4);
+});
+
+test('greeted turns true on an uncancelled audio_end or on the fallback', () => {
+  let s = run([{ type: 'audio_start', turn_id: 1, sample_rate: 24000 }, { type: 'audio_end', turn_id: 1, cancelled: true }]);
+  assert.equal(s.greeted, false);
+  assert.equal(reduce(s, { type: 'greeting_timeout' }).greeted, true);
+  s = run([{ type: 'audio_start', turn_id: 1, sample_rate: 24000 }, { type: 'audio_end', turn_id: 1 }]);
+  assert.equal(s.greeted, true);
+});
+
+test('a notice shows as the error line and a new press clears it', () => {
+  let s = reduce(initialState, { type: 'notice' });
+  assert.equal(s.error, 'Connection nahi hai, dobara dabaiye');
+  s = reduce(s, { type: 'local_start' });
+  assert.equal(s.error, null);
+});
+
+test('the chosen language is kept and the notice follows it', () => {
+  let s = reduce(initialState, { type: 'set_lang', lang: 'en' });
+  assert.equal(s.lang, 'en');
+  assert.equal(reduce(s, { type: 'notice' }).error, 'No connection, press again');
+  assert.equal(reduce(initialState, { type: 'set_lang', lang: 'fr' }).lang, 'hi');
+});
+
+test('a result with lang switches the label language, one without keeps it', () => {
+  let s = run([{ type: 'set_lang', lang: 'hi' }, { type: 'result', turn_id: 1, status: 'ok', action: 'none', entries: [], reply_text: 'x', lang: 'en' }]);
+  assert.equal(s.lang, 'en');
+  s = reduce(s, { type: 'result', turn_id: 2, status: 'ok', action: 'none', entries: [], reply_text: 'y' });
+  assert.equal(s.lang, 'en');
+  s = reduce(s, { type: 'result', turn_id: 3, status: 'ok', action: 'none', entries: [], reply_text: 'z', lang: 'hi' });
+  assert.equal(s.lang, 'hi');
+});
+
+test('a stale result does not change the language, and a new session keeps it', () => {
+  let s = run([{ type: 'set_lang', lang: 'hi' }, { type: 'state', turn_id: 3, state: 'idle' }]);
+  s = reduce(s, { type: 'result', turn_id: 2, status: 'ok', action: 'none', entries: [], reply_text: 'x', lang: 'en' });
+  assert.equal(s.lang, 'hi');
+  s = run([{ type: 'ready', session_id: 'A' }, { type: 'set_lang', lang: 'en' }, { type: 'ready', session_id: 'B' }], s);
+  assert.equal(s.lang, 'en');
+});

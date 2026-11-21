@@ -8,6 +8,9 @@ import httpx
 import websockets
 
 
+AUDIO = 16384  # bytes: 0.512 s of 16 kHz PCM16, sixteen 1,024-byte frames (shorter recordings are ignored)
+
+
 async def get(url):
     async with httpx.AsyncClient() as c:
         return await c.get(url)
@@ -79,7 +82,7 @@ async def test_audio_turn_reframes_and_commits(server, fake_gnani):
         await ws.send(json.dumps({"type": "start", "mode": "ptt"}))
         await recv_until(ws, is_type("state", state="listening"))
         for _ in range(5):
-            await ws.send(bytes(700))  # 3,500 bytes: three full frames and a partial one
+            await ws.send(bytes(3300))  # 16,500 bytes: sixteen full frames and a partial one
         await ws.send(json.dumps({"type": "end"}))
         msgs = await recv_until(ws, is_type("audio_end"))
         states = [m["state"] for m in of(msgs, "state")]
@@ -89,12 +92,12 @@ async def test_audio_turn_reframes_and_commits(server, fake_gnani):
         assert of(msgs, "result")[0]["action"] == "append"
         assert of(msgs, "timing")[0]["ms"]["gnani_stt_latency"] == 123
         sess = fake_gnani.stt_sessions[0]
-        assert sess["frames"] == [1024, 1024, 1024, 1024] and sess["commits"] == 1
+        assert sess["frames"] == [1024] * 17 and sess["commits"] == 1
         assert sess["headers"]["model"] == "prisma-v3.0" and sess["headers"]["x-sample-rate"] == "16000"
         assert sess["headers"]["format"] == "transliterate" and "udhaar" in sess["headers"]["keyterms"]
         # The socket is reused for the next turn.
         await ws.send(json.dumps({"type": "start", "mode": "ptt"}))
-        await ws.send(bytes(1024))
+        await ws.send(bytes(AUDIO))
         await ws.send(json.dumps({"type": "end"}))
         await recv_until(ws, is_type("audio_end"))
         assert len(fake_gnani.stt_sessions) == 1 and fake_gnani.stt_sessions[0]["commits"] == 2
@@ -119,21 +122,36 @@ async def test_barge_in_cancels_audio(server, fake_gnani):
         assert fake_gnani.tts_closed >= 1  # the TTS socket was dropped
 
 
-async def test_no_speech_returns_action_none(server, fake_gnani):
-    fake_gnani.speech = False
+async def test_short_recording_is_ignored_M03(server, fake_gnani):
     async with websockets.connect(server.url) as ws:
         await hello(ws)
         await ws.send(json.dumps({"type": "start", "mode": "ptt"}))
-        await ws.send(bytes(2048))
+        await ws.send(bytes(2048))  # 64 ms: shorter than half a second
         await ws.send(json.dumps({"type": "end"}))
         msgs = await recv_until(ws, is_type("result"))
-        assert msgs[-1]["action"] == "none" and msgs[-1]["entries"] == []
+        assert msgs[-1]["action"] == "none" and msgs[-1]["entries"] == [] and msgs[-1]["reply_text"] == ""
         await asyncio.sleep(0.2)
         n_tts = len(fake_gnani.tts_requests)
         await ws.send(json.dumps({"type": "ping", "t": 7}))
         pong = await recv_until(ws, is_type("pong"))
         assert pong[-1]["t"] == 7 and not any(isinstance(m, tuple) for m in pong)
         assert len(fake_gnani.tts_requests) == n_tts
+        async with httpx.AsyncClient() as c:
+            assert (await c.get(server.http + "/api/ledger")).json()["entries"] == []
+
+
+async def test_silence_reply_is_spoken_M02(server, fake_gnani):
+    fake_gnani.speech = False
+    async with websockets.connect(server.url) as ws:
+        await hello(ws)
+        await ws.send(json.dumps({"type": "start", "mode": "ptt"}))
+        await ws.send(bytes(AUDIO))
+        await ws.send(json.dumps({"type": "end"}))
+        msgs = await recv_until(ws, is_type("audio_end", turn_id=1))
+        result = of(msgs, "result")[0]
+        assert result["action"] == "none" and result["entries"] == [] and result["reason"] == "silence"
+        assert result["reply_text"] == "Kuch sunai nahi diya. Dobara boliye."
+        assert [m for m in msgs if isinstance(m, tuple)]
 
 
 async def test_resume_keeps_session_without_greeting(server):
@@ -143,9 +161,11 @@ async def test_resume_keeps_session_without_greeting(server):
         await ws.send(json.dumps({"type": "text", "text": "ramesh 340"}))
         await recv_until(ws, is_type("audio_end"))
     async with websockets.connect(server.url) as ws:
-        await ws.send(json.dumps({"type": "hello", "resume": sid}))
+        # An automatic reconnect inside a loaded page keeps the open question (L05).
+        await ws.send(json.dumps({"type": "hello", "resume": sid, "keep_pending": True}))
         ready = await recv_until(ws, is_type("ready"))
-        assert ready[-1]["session_id"] == sid
+        assert ready[-1]["session_id"] == sid and ready[-1]["last_turn_id"] == 1
+        assert ready[-1]["last_result"]["status"] == "needs_clarification"
         await ws.send(json.dumps({"type": "text", "text": "udhaar"}))
         msgs = await recv_until(ws, is_type("result"))
         assert msgs[-1]["status"] == "ok" and msgs[-1]["turn_id"] == 2
@@ -193,7 +213,7 @@ async def test_partials_header_and_vocabulary(server, fake_gnani):
     async with websockets.connect(server.url) as ws:
         await hello(ws)
         await ws.send(json.dumps({"type": "start", "mode": "ptt"}))
-        await ws.send(bytes(2048))
+        await ws.send(bytes(AUDIO))
         await ws.send(json.dumps({"type": "end"}))
         msgs = await recv_until(ws, is_type("audio_end"))
         assert fake_gnani.stt_sessions[0]["headers"]["x-partials"] == "true"
@@ -225,7 +245,7 @@ async def test_legacy_vocabulary_without_partials(settings, parser, fake_gnani):
         async with websockets.connect(url) as ws:
             await hello(ws)
             await ws.send(json.dumps({"type": "start", "mode": "ptt"}))
-            await ws.send(bytes(2048))
+            await ws.send(bytes(AUDIO))
             await ws.send(json.dumps({"type": "end"}))
             msgs = await recv_until(ws, is_type("audio_end"))
             assert "x-partials" not in fake_gnani.stt_sessions[0]["headers"]
