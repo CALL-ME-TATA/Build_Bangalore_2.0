@@ -37,7 +37,10 @@ export function Sheet({ open, onOpenChange, title, description, initialFocus, re
           className="sheet-content"
           onOpenAutoFocus={(e) => {
             e.preventDefault();
-            initialFocus?.current?.focus();
+            const el = initialFocus?.current;
+            el?.focus();
+            // A text field opens with its text selected, so typing replaces it.
+            if (el instanceof HTMLInputElement) el.select();
           }}
           onCloseAutoFocus={(e) => {
             e.preventDefault();

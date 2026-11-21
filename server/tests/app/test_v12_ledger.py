@@ -410,7 +410,7 @@ async def test_N02_say_replaces_display_name_in_speech_only(server, fake_gnani, 
     apply_events(ledger, [ev("credit", "ramesh", 10)])
     rid = ledger.find_customer(key="ramesh")["id"]
     async with httpx.AsyncClient() as c:
-        assert (await c.post(server.http + f"/api/customers/{rid}", json={"say": "Rameysh"})).json() == {"ok": True}
+        assert (await c.post(server.http + f"/api/customers/{rid}", json={"say": "Rameysh"})).json()["ok"] is True
         assert (await c.post(server.http + "/api/customers/nobody", json={"say": "x"})).status_code == 404
         assert (await c.post(server.http + f"/api/customers/{rid}", json={"lang": "fr"})).status_code == 400
     async with websockets.connect(server.url) as ws:

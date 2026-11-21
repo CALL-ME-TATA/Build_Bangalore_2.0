@@ -4,8 +4,8 @@
 // States: loading, error with what to do, offline (figures may be stale), and an unknown id ("not found" with a
 // way back). The API gives no opt-in date and no spoken phrase, so neither is shown.
 import { Link } from '@tanstack/react-router';
-import { ArrowLeft, ChevronLeft, CloudOff } from 'lucide-react';
-import { useEffect, useRef, type RefObject } from 'react';
+import { ArrowLeft, ChevronLeft, CloudOff, Pencil, Plus } from 'lucide-react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Amount } from '../../components/Amount';
 import { Button } from '../../components/Button';
 import { useOnline } from '../../hooks/useOnline';
@@ -19,6 +19,9 @@ import { customerLabels, type CustomerLabelKey } from './labels';
 import { customerTimeline, historyMayBeCut } from './logic';
 import { ReminderPanel } from './Reminder';
 import { Timeline } from './Timeline';
+import { useEdit } from './useEdit';
+import { EditSheets, type EditState, type EditTarget } from './EditSheets';
+import { fill } from '../khata/labels';
 import { StaleNote } from '../../services/offline/OfflineNotes';
 
 const BALANCE: Record<ReturnType<typeof balanceState>, { label: CustomerLabelKey; ink: string }> = {
@@ -97,25 +100,56 @@ function Found({ customer, lang, titleRef, data, online }: FoundProps) {
   const own = useCustomerLedger(customer.id, LEDGER_LIMIT, !data.synthetic);
   const entries = own.data?.entries ?? data.ledger?.entries ?? [];
   const groups = customerTimeline(entries, customer.id, now, lang);
+  const [sheet, setSheet] = useState<EditState | null>(null);
+  const save = useEdit();
+  // Editing needs the server and real data: offline and on the synthetic list the controls are off, with the reason.
+  const reason = !online ? C.editOffline : data.synthetic ? C.editSynthetic : null;
+  const editable = reason === null;
+  const open = (target: EditTarget) => setSheet({ open: true, target });
 
   return (
     <>
       <div className="flex flex-col gap-0.5 pt-2 sm:pt-7">
-        <h1 id="customer-title" ref={titleRef} tabIndex={-1} className="text-[1.25rem] leading-[1.35] font-semibold text-ink outline-none">
-          <span lang={scriptLang(customer.display)}>{customer.display}</span>
-          {tag ? (
-            <span className="font-normal text-ink-2" lang={scriptLang(tag)}>
-              {' · '}
-              {tag}
-            </span>
-          ) : null}
-        </h1>
+        <div className="flex items-start gap-1">
+          <h1 id="customer-title" ref={titleRef} tabIndex={-1} className="min-w-0 flex-1 text-[1.25rem] leading-[1.35] font-semibold text-ink outline-none">
+            <span lang={scriptLang(customer.display)}>{customer.display}</span>
+            {tag ? (
+              <span className="font-normal text-ink-2" lang={scriptLang(tag)}>
+                {' · '}
+                {tag}
+              </span>
+            ) : null}
+          </h1>
+          <button
+            type="button"
+            id="customer-edit"
+            disabled={!editable}
+            aria-describedby={reason ? 'edit-reason' : undefined}
+            aria-label={fill(C.editCustomerSr, { name: customer.display })}
+            onClick={() => open({ type: 'customer' })}
+            className="-me-2 inline-flex size-11 shrink-0 items-center justify-center rounded-control text-ink-2 hover:bg-tint hover:text-ink disabled:opacity-50"
+          >
+            <Pencil aria-hidden="true" size={18} strokeWidth={1.8} />
+          </button>
+        </div>
         <p className="pt-[1.125rem] text-[0.875rem] text-ink-2">{C[balance.label]}</p>
-        {/* 64px with the rupee sign at 40px; shrinks with the column so ₹1,00,000 fits at 320px and large text. */}
+        {/* 64px with the rupee sign at 40px; shrinks with the column so ₹1,00,000 fits at 320px and large text.
+            The figure is a button: it opens "Baaki badlein". */}
         <div className="@container">
-          <p className={`text-hero [&_.amount-symbol]:text-[0.625em] ${balance.ink}`} style={{ fontSize: 'min(var(--text-hero), 17cqi)' }}>
-            <Amount value={Math.abs(customer.balance)} sign="none" size="inherit" lang={lang} />
-          </p>
+          <button
+            type="button"
+            id="balance-edit"
+            disabled={!editable}
+            aria-describedby={reason ? 'edit-reason' : undefined}
+            onClick={() => open({ type: 'balance' })}
+            className="flex min-h-11 max-w-full flex-wrap items-center gap-x-3 rounded-control text-start disabled:cursor-default"
+          >
+            <span className={`block text-hero [&_.amount-symbol]:text-[0.625em] ${balance.ink}`} style={{ fontSize: 'min(var(--text-hero), 17cqi)' }}>
+              <Amount value={Math.abs(customer.balance)} sign="none" size="inherit" lang={lang} />
+            </span>
+            <Pencil aria-hidden="true" size={18} strokeWidth={1.8} className="shrink-0 text-ink-2" />
+            <span className="sr-only">{C.editBalance}</span>
+          </button>
         </div>
       </div>
 
@@ -130,9 +164,41 @@ function Found({ customer, lang, titleRef, data, online }: FoundProps) {
         <ReminderPanel customer={customer} lang={lang} synthetic={data.synthetic} />
       </div>
 
-      <div className="pt-[1.625rem]">
-        <Timeline groups={groups} lang={lang} now={now} cut={historyMayBeCut(entries.length, LEDGER_LIMIT)} />
+      <div className="flex flex-col items-start gap-2 pt-[1.625rem]">
+        <Button
+          id="entry-new"
+          icon={<Plus size={18} strokeWidth={1.8} />}
+          disabled={!editable}
+          aria-describedby={reason ? 'edit-reason' : undefined}
+          onClick={() => open({ type: 'new' })}
+        >
+          {C.newEntry}
+        </Button>
+        {reason ? (
+          <p id="edit-reason" className="text-meta text-ink-2">
+            {reason}
+          </p>
+        ) : null}
       </div>
+
+      <div className="pt-3">
+        <Timeline
+          groups={groups}
+          lang={lang}
+          now={now}
+          cut={historyMayBeCut(entries.length, LEDGER_LIMIT)}
+          onEdit={editable ? (entry) => open({ type: 'entry', entry }) : undefined}
+        />
+      </div>
+
+      <EditSheets
+        state={sheet}
+        onClose={() => setSheet((s) => (s ? { ...s, open: false } : s))}
+        customer={customer}
+        customers={data.customers ?? [customer]}
+        lang={lang}
+        onSave={save}
+      />
     </>
   );
 }

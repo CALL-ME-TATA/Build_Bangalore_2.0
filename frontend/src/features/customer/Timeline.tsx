@@ -3,6 +3,9 @@
 // A corrected entry shows the old amount struck through in small ink-2 above the new one, labelled
 // "Udhaar · sudhaara". A removed entry with nothing in its place (an undo) stays visible, struck through, labelled
 // "Udhaar · hataya". History is never hidden. The API has no spoken phrase, so that line is left out.
+// With `onEdit`, every active row is one button (44px+ tall, trailing pencil) that opens "Entry badlein";
+// removed rows and reversal rows are plain text.
+import { Pencil } from 'lucide-react';
 import { kindLabel } from '../../lib/format';
 import type { Entry } from '../../services/session/types';
 import { labels, type Lang } from '../../i18n';
@@ -10,8 +13,18 @@ import { Amount } from '../../components/Amount';
 import type { TimelineGroup } from './logic';
 import { entryTime } from './logic';
 import { customerLabels } from './labels';
+import { isEditable } from './edit';
 
-export function Timeline({ groups, lang, now, cut }: { groups: TimelineGroup[]; lang: Lang; now: Date; cut: boolean }) {
+interface TimelineProps {
+  groups: TimelineGroup[];
+  lang: Lang;
+  now: Date;
+  cut: boolean;
+  /** Opens the edit sheet of an active row. Absent: rows are not editable. */
+  onEdit?: (entry: Entry) => void;
+}
+
+export function Timeline({ groups, lang, now, cut, onEdit }: TimelineProps) {
   const C = customerLabels(lang);
   const L = labels(lang);
   return (
@@ -27,8 +40,8 @@ export function Timeline({ groups, lang, now, cut }: { groups: TimelineGroup[]; 
                 const e = it.entry;
                 const word = kindLabel(e.kind, lang);
                 const label = it.replaced ? `${word} · ${C.corrected}` : e.reversed ? `${word} · ${L.removed}` : word;
-                return (
-                  <li key={String(e.id)} className="flex flex-col gap-1 border-t border-line py-3">
+                const body = (
+                  <>
                     {it.replaced ? (
                       <span className="text-[0.875rem] text-ink-2 line-through decoration-1">
                         <span className="sr-only">{C.oldAmount}: </span>
@@ -36,6 +49,24 @@ export function Timeline({ groups, lang, now, cut }: { groups: TimelineGroup[]; 
                       </span>
                     ) : null}
                     <Line entry={e} label={label} plain={!it.replaced && !e.reversed} lang={lang} now={now} />
+                  </>
+                );
+                return (
+                  <li key={String(e.id)} className="border-t border-line">
+                    {onEdit && isEditable(e) ? (
+                      <button
+                        type="button"
+                        id={`entry-edit-${e.id}`}
+                        onClick={() => onEdit(e)}
+                        className="flex min-h-14 w-full items-center gap-3 rounded-control py-3 text-start hover:bg-tint"
+                      >
+                        <span className="flex min-w-0 flex-1 flex-col gap-1">{body}</span>
+                        <Pencil aria-hidden="true" size={18} strokeWidth={1.8} className="shrink-0 text-ink-2" />
+                        <span className="sr-only">{C.editEntrySr}</span>
+                      </button>
+                    ) : (
+                      <div className="flex flex-col gap-1 py-3">{body}</div>
+                    )}
                   </li>
                 );
               })}
@@ -53,7 +84,7 @@ export function Timeline({ groups, lang, now, cut }: { groups: TimelineGroup[]; 
 function Line({ entry, label, plain, lang, now }: { entry: Entry; label: string; plain: boolean; lang: Lang; now: Date }) {
   const struck = entry.reversed ? 'text-ink-2 line-through decoration-1' : '';
   return (
-    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+    <span className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
       <span className={`min-w-[5.75rem] text-[1.375rem] leading-[1.2] ${struck}`}>
         <Amount value={entry.amount} kind={entry.kind} size="inherit" tone={!entry.reversed} lang={lang} />
       </span>
@@ -62,6 +93,6 @@ function Line({ entry, label, plain, lang, now }: { entry: Entry; label: string;
         <span aria-hidden={plain || undefined}>{label}</span>
       </span>
       <span className="text-meta text-ink-2 tabular">{entryTime(entry, now, lang)}</span>
-    </div>
+    </span>
   );
 }

@@ -328,8 +328,14 @@ class Pipeline:
         if last:
             ctx["last_event"] = last
             ctx["last_events"] = self.ledger.last_events(state.session_id, now)
+        lt_state = state.last_turn
+        if lt_state and lt_state.get("action") in ("append", "amend") and lt_state.get("event_ids"):
+            # An entry this session saved was changed or removed elsewhere (the khata screens): a spoken
+            # correction must not fall on an older entry, so the session has no last turn.
+            if not set(lt_state["event_ids"]) <= self.ledger.active_ids(list(lt_state["event_ids"])):
+                self._set_last_turn(state, "none", now)
         if state.last_turn:
-            lt = {k: v for k, v in state.last_turn.items() if k != "at" and v is not None}
+            lt = {k: v for k, v in state.last_turn.items() if k not in ("at", "event_ids") and v is not None}
             lt["age_s"] = max(0, int((now - state.last_turn["at"]).total_seconds()))
             ctx["last_turn"] = lt
         self.expire_pending(state, now)
@@ -679,6 +685,8 @@ class Pipeline:
         else:
             ev = (outcome.saved or outcome.reversed)[-1]
             self._set_last_turn(state, outcome.action, now, {"key": ev.get("key"), "id": ev.get("customer_id")})
+            if outcome.action in ("append", "amend") and outcome.saved:
+                state.last_turn["event_ids"] = [e["id"] for e in outcome.saved]
         return turn
 
     # ---- queries ----------------------------------------------------------------------------------------------

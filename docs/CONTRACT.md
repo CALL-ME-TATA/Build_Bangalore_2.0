@@ -1,4 +1,4 @@
-# CONTRACT v1.7 (2026-11-21)
+# CONTRACT v1.8 (2026-11-21)
 
 The binding interface specification for KhataVaani. Changes go through the tech lead.
 Where this file disagrees with an older note, this file wins.
@@ -896,7 +896,8 @@ Server → client
 | `{"type":"timing","turn_id","trace_id","ms":{"stt_final","parse","db","tts_first_chunk","end_to_first_audio","gnani_stt_latency"}}` | Per-hop timings |
 | `{"type":"error","turn_id"?,"code","message"}` | |
 
-Entry shape: `{"id","kind","customer":{"id","display","tags"},"amount","date","ts","reversed","reversal_of"}`.
+Entry shape: `{"id","kind","customer":{"id","display","tags"},"amount","date","ts","reversed","reversal_of","replaces"}`
+(`replaces`, v1.8: the id of the entry this one corrected, or null; see 3.6).
 Every amount in this API (`amount`, `balance`, `totals`) is whole rupees as an integer. Reversal rows are not listed as
 entries; they only set `reversed` on the entry they cancel (`reversal_of` is null in `result`).
 
@@ -1070,6 +1071,71 @@ Being careful
 
 Configuration: `NOISE_TRIM` (`1`), `NOISE_TRIM_DB` (`16`), `NOISE_CONFIRM_DB` (`14`; `0` switches the
 confirmation off).
+
+### 3.6 Editing on the khata screens (v1.8)
+
+The shopkeeper can change by hand what was written by voice, on the customer screen. The ledger stays append-only
+(2): a change is an amend (a reversal plus a new event with `replaces_id`), a removal is a reversal, and both stay
+visible in the history. Customer details are the one record changed in place, as tags and the reminder opt-in
+already are.
+
+REST. Every call has the same guard as `/api/ledger` (Google sign-in when it is on, `ACCESS_CODE` when it is set).
+Bodies are JSON. Amounts are whole rupees; dates are `YYYY-MM-DD` shop days.
+
+| Call | Body | Does |
+|---|---|---|
+| `POST /api/entries` | `{"customer_id","kind","amount","date"?,"if_balance"?}` | Appends one entry; `date` defaults to today. With `if_balance`, refuses with 409 `balance_changed` when the customer's balance is no longer that figure (the screen was out of date) |
+| `POST /api/entries/{id}/amend` | any of `{"kind","amount","date","customer_id"}` | Reverses the entry and saves the changed copy with `replaces_id` = id, in one transaction. A field left out keeps its value |
+| `POST /api/entries/{id}/remove` | none | Reverses that one entry |
+| `POST /api/customers/{id}` | adds `"display"?`, `"tags"?`, `"phone"?` to `say` and `lang` | Renames the customer, replaces the tags, sets or clears the phone number |
+
+Answers
+- Entry calls: 200 `{"ok": true, "entries": [...], "balances": [{"customer_id","display","balance"}]}`. `entries`
+  has the shape of `/api/ledger`: the entry reversed first (if any), then the entry saved (if any). `balances` covers
+  every customer the call touched.
+- Customer call: 200 `{"ok": true, "customer": {...}}` with the shape of one `/api/customers` item.
+- `GET /api/customers` items gain `"phone_hint"`: the last four digits of the stored number as `"•••• 3210"`, or
+  null. The full number is never sent to the page.
+- Errors carry a code in `detail`. 400: `bad_kind` (not credit, payment or writeoff), `bad_amount` (not a whole
+  number from 1 to `MAX_AMOUNT`), `bad_date` (not a date, after today in shop time, or before 2000-01-01),
+  `nothing_changed` (an amend equal to the entry, or no field given), `bad_name`, `bad_tag`, `bad_phone`. 404:
+  `unknown_entry`, `unknown_customer`. 409: `not_active` (the entry was already removed or changed, or it is a
+  reversal), `name_taken` (another customer has that name or alias), `balance_changed`.
+
+Rules
+- `kind` is `credit`, `payment` or `writeoff`; a write-off is stored as in 2.1. Reversal rows are never edited.
+- Events written here have `session_id` `"portal"`, no `utterance_id` and a new `trace_id`. They write no utterance
+  row, so `/api/metrics` does not count them as turns, and an amend here never counts a confusion pair (2.1): nothing
+  was misheard.
+- Names: the display name becomes the key the parser matches: Devanagari romanised, lower case, single spaces, 2 to
+  40 characters, only letters, spaces, `.`, `'` and `-`. The old key is kept as an alias, so the old name still finds
+  the customer by voice. A name that the number reader reads as a number, or whose every word is a keyword the parser
+  never takes as a name (`nevername`), is refused `bad_name`. Tags: up to 3, each made the same way, at most 24
+  characters (`bad_tag`). Phone: an Indian mobile number (10 digits, with or without 91, +91 or 0) or null to clear it
+  (`bad_phone`); the reminder opt-in does not change.
+- Every `/api/ledger` entry carries `"replaces"`: the id of the entry it corrected, or null. The customer screen
+  pairs a correction with the entry it replaced by that id, and by position only when it is null.
+
+Voice sessions stay safe
+- After an append or amend the session remembers the ids of the events it saved. If any of them is no longer active
+  when the next turn's context is built (changed or removed on the khata screen in the meantime), `last_turn` becomes
+  `none` before the parser runs, as after any turn that saved nothing. A spoken correction then gets the question
+  that names the entry it would change (`Ramesh ki ₹340 udhaar entry ₹250 kar doon?`, 1.16) and saves nothing until
+  a yes, or is rejected `no_last_event` when the session has no active entry left; a bare `hata do` gets the
+  undo-check question that names the entry (1.15). An older entry is never changed silently.
+- An open question is left as it is. An amend it leads to whose target is no longer active saves nothing
+  (`entry_not_found`), as before.
+
+The page (`frontend/`)
+- Customer screen: an edit button beside the name opens "Grahak badlein" (name, tag, phone). Tapping the balance
+  opens "Baaki badlein": the new balance; the difference is written as one entry (higher: `credit`; lower: the
+  shopkeeper chooses Jama `payment` or Maaf `writeoff`) and sent with `if_balance`. "Nayi entry" above the history
+  adds an entry by hand.
+- Each active row of the history opens "Entry badlein": amount, Udhaar / Jama / Maaf, date (not after today) and the
+  customer. "Entry hatayein" asks once more and says that the entry stays visible, struck through.
+- In the scripted mock mode the controls work against the mock ledger. Offline, and on the synthetic list, they are
+  disabled with a short reason. After a change every khata query is refreshed.
+- Every visible text has a Hinglish and an English form. No pressure or threat language.
 
 ## 4. Gnani API Platform (`server/app/gnani/`), verified against docs.gnani.ai
 

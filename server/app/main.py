@@ -13,6 +13,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from dataclasses import fields
+from datetime import date
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -27,6 +28,7 @@ from .crypto import Crypto, load_key
 from .gnani.stt import SttClient
 from .gnani.tts import TtsClient
 from .gnani.tts import _memory_cache as tts_memory_cache
+from .edits import EditError
 from .ledger import Ledger, in_quiet_hours
 from .llm import client_from_settings as llm_client_from_settings
 from .llm import from_settings as from_llm_settings
@@ -42,6 +44,7 @@ log = logging.getLogger("khata.main")
 REPO = Path(__file__).resolve().parents[2]
 WEB_DIR = REPO / "web"
 DIST_DIR = REPO / "frontend" / "dist"
+MIN_DATE = date(2000, 1, 1)  # earliest date accepted on a hand-written entry
 PLACEHOLDER = """<!doctype html><meta charset="utf-8"><title>KhataVaani</title>
 <h1>KhataVaani server is running</h1><p>The web app is not installed yet. Session endpoint: /ws/session</p>"""
 
@@ -344,16 +347,95 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
 
     @app.post("/api/customers/{customer_id}", dependencies=guarded)
     async def update_customer(request: Request, customer_id: str, body: dict):
-        """Set the optional pronunciation `say` (spoken in place of the display name) or the reminder `lang`."""
+        """Set the pronunciation `say`, the reminder `lang`, the display name, the tags or the phone number."""
         say = body.get("say")
         lang = body.get("lang")
         if say is not None and (not isinstance(say, str) or len(say) > 80):
             raise HTTPException(400, "say must be a short string")
         if lang is not None and lang not in ("hi", "en"):
             raise HTTPException(400, "lang must be hi or en")
-        if not ctx(request).ledger.update_customer(customer_id, say=say, lang=lang):
-            raise HTTPException(404, "unknown customer")
-        return {"ok": True}
+        extra = {k: body[k] for k in ("display", "tags", "phone") if k in body}
+        led = ctx(request).ledger
+        try:
+            found = led.update_customer(customer_id, say=say, lang=lang, **extra)
+        except EditError as exc:
+            raise HTTPException(exc.status, exc.code) from exc
+        if not found:
+            raise HTTPException(404, "unknown_customer")
+        return {"ok": True, "customer": led.customer_summary(customer_id)}
+
+    # ---- hand edits on the khata screens (CONTRACT 3.6) ---------------------------------------------------------
+    # Every read and write goes to the khata of the request (the signed-in account's own ledger when sign-in is on).
+    def check_kind(value) -> str:
+        if value not in ("credit", "payment", "writeoff"):
+            raise HTTPException(400, "bad_kind")
+        return value
+
+    def check_amount(value) -> int:
+        if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= cfg.max_amount:
+            raise HTTPException(400, "bad_amount")
+        return value
+
+    def check_date(value, c: AppContext) -> str:
+        try:
+            if not isinstance(value, str) or len(value) != 10:
+                raise ValueError
+            day = date.fromisoformat(value)
+        except ValueError:
+            raise HTTPException(400, "bad_date") from None
+        if day > c.pipeline.now().date() or day < MIN_DATE:
+            raise HTTPException(400, "bad_date")
+        return day.isoformat()
+
+    def run_edit(c: AppContext, call, action: str) -> dict:
+        """Run one edit; after it commits, publish one notification per saved entry (per removed entry for
+        `undo`), with the same event shape as a spoken entry (app/notify.py)."""
+        try:
+            done = call()
+        except EditError as exc:
+            raise HTTPException(exc.status, exc.code) from exc
+        entries = c.ledger.entries_by_ids(done["reversed"] + done["saved"])
+        published = set(done["reversed"] if action == "undo" else done["saved"])
+        for e in entries:
+            if e["id"] in published:
+                c.pipeline.notify({"type": f"entry_{action}", "entry_id": e["id"], "customer_id": e["customer"]["id"],
+                                   "kind": e["kind"], "amount": e["amount"]})
+        return {"ok": True, "entries": entries, "balances": c.ledger.balance_items(done["touched"])}
+
+    @app.post("/api/entries", dependencies=guarded)
+    async def add_entry(request: Request, body: dict):
+        c = ctx(request)
+        kind = check_kind(body.get("kind"))
+        amount = check_amount(body.get("amount"))
+        today = c.pipeline.now().date()
+        eff = check_date(body["date"], c) if body.get("date") is not None else today.isoformat()
+        if_balance = body.get("if_balance")
+        if if_balance is not None and (not isinstance(if_balance, int) or isinstance(if_balance, bool)):
+            raise HTTPException(400, "bad_amount")
+        cid = body.get("customer_id")
+        return run_edit(c, lambda: c.ledger.add_entry(cid, kind, amount, eff, if_balance=if_balance,
+                                                      now=c.pipeline.now()), "append")
+
+    @app.post("/api/entries/{event_id}/amend", dependencies=guarded)
+    async def amend_entry(request: Request, event_id: int, body: dict):
+        c = ctx(request)
+        changes = {}
+        if body.get("kind") is not None:
+            changes["kind"] = check_kind(body["kind"])
+        if body.get("amount") is not None:
+            changes["amount"] = check_amount(body["amount"])
+        if body.get("date") is not None:
+            changes["eff"] = check_date(body["date"], c)
+        if body.get("customer_id") is not None:
+            changes["customer_id"] = body["customer_id"]
+        if not changes:
+            raise HTTPException(400, "nothing_changed")
+        return run_edit(c, lambda: c.ledger.amend_entry(event_id, now=c.pipeline.now(), **changes), "amend")
+
+    @app.post("/api/entries/{event_id}/remove", dependencies=guarded)
+    async def remove_entry(request: Request, event_id: int):
+        c = ctx(request)
+        return run_edit(c, lambda: c.ledger.remove_entry(event_id, now=c.pipeline.now()), "undo")
 
     @app.post("/api/admin/purge")
     async def admin_purge(x_admin_token: str | None = Header(default=None)):

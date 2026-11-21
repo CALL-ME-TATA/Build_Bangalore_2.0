@@ -10,10 +10,10 @@ import { customerLabels, type CustomerLabelKey } from './labels';
 export interface TimelineItem {
   entry: Entry;
   /**
-   * A removed entry shown struck through just above this one. The API does not link a correction to the entry it
-   * replaced, so the pairing is by position: a removed entry is paired with the next entry of the same customer
-   * recorded after it, when that one is active and dated the same day. A removed entry with no such successor
-   * (an undo) is listed on its own. Either way nothing is hidden.
+   * A removed entry shown struck through just above this one. When the entry carries `replaces`, it is paired with
+   * the entry that id names (even on another date). Only when `replaces` is null or absent (an older server) is it
+   * paired by position: with the next entry of the same customer recorded after it, when that one is active and
+   * dated the same day. A removed entry with no partner (an undo) is listed on its own. Either way nothing is hidden.
    */
   replaced?: Entry;
 }
@@ -46,12 +46,44 @@ export function groupLabel(date: string, now: Date, lang: Lang): string {
   return plain;
 }
 
-/** One customer's entries grouped by effective date, newest date first, newest entry first in each group. */
+function entryDate(e: Entry): string {
+  return /^\d{4}-\d{2}-\d{2}/.test(e.date) ? e.date.slice(0, 10) : ymd(new Date(Date.parse(e.ts) || 0));
+}
+
+/**
+ * Pairs by `replaces`: replacer -> the entry it corrected, when that entry is in `mine`. Newest first, so in a chain
+ * (a corrected to b, b to c) c takes b and b stays hidden under c; a is then listed on its own, never lost.
+ */
+function pairById(mine: readonly Entry[]): Map<Entry, Entry> {
+  const byId = new Map<string, Entry>(mine.map((e) => [String(e.id), e]));
+  const pairs = new Map<Entry, Entry>();
+  const hidden = new Set<Entry>();
+  for (const e of mine) {
+    if (e.replaces === null || e.replaces === undefined || hidden.has(e)) continue;
+    const target = byId.get(String(e.replaces));
+    if (!target || target === e || hidden.has(target)) continue;
+    pairs.set(e, target);
+    hidden.add(target);
+  }
+  return pairs;
+}
+
+/**
+ * One customer's entries grouped by effective date, newest date first, newest entry first in each group. A
+ * correction sits with the entry it replaced (by `replaces`; by position when that is null or absent).
+ */
 export function customerTimeline(entries: readonly Entry[], customerId: string, now: Date, lang: Lang): TimelineGroup[] {
   const mine = entries.filter((e) => e.customer.id === customerId).sort(newerFirst);
+  const pairs = pairById(mine);
+  const hidden = new Set<Entry>(pairs.values());
+  // Entries some entry (of any customer) names in `replaces`: never paired by position.
+  const named = new Set<string>();
+  for (const e of entries) if (e.replaces !== null && e.replaces !== undefined) named.add(String(e.replaces));
+
   const byDate = new Map<string, Entry[]>();
   for (const e of mine) {
-    const d = /^\d{4}-\d{2}-\d{2}/.test(e.date) ? e.date.slice(0, 10) : ymd(new Date(Date.parse(e.ts) || 0));
+    if (hidden.has(e)) continue;
+    const d = entryDate(e);
     const list = byDate.get(d);
     if (list) list.push(e);
     else byDate.set(d, [e]);
@@ -65,8 +97,18 @@ export function customerTimeline(entries: readonly Entry[], customerId: string, 
     for (let i = 0; i < list.length; i++) {
       const e = list[i];
       if (!e || used.has(e)) continue;
+      const byReplaces = pairs.get(e);
       const older = list[i + 1];
-      if (!e.reversed && older && older.reversed && !used.has(older)) {
+      if (byReplaces) {
+        items.push({ entry: e, replaced: byReplaces });
+      } else if (
+        (e.replaces === null || e.replaces === undefined) &&
+        !e.reversed &&
+        older &&
+        older.reversed &&
+        !used.has(older) &&
+        !named.has(String(older.id))
+      ) {
         items.push({ entry: e, replaced: older });
         used.add(older);
       } else {

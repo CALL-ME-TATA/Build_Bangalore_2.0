@@ -20,6 +20,7 @@ from typing import Any, Callable
 from urllib.parse import quote
 
 from .crypto import Crypto
+from .edits import EditError, customer_key, phone_hint, phone_number, tag_list
 from .names import SpokenName, display_name
 
 SCHEMA = """
@@ -79,6 +80,8 @@ ACTIVE = (
 SIGNED = "CASE e.kind WHEN 'credit' THEN e.amount_paise ELSE -e.amount_paise END"
 NOT_WRITEOFF = "e.adjustment IS NULL"
 ENTRY_KINDS = ("credit", "payment", "writeoff")
+PORTAL_SESSION = "portal"  # session id of events written on the khata screens
+_UNSET: Any = object()
 PERIODS = ("today", "yesterday", "this_week", "last_week", "this_month", "last_month")
 QUIET_START_HOUR = 9   # reminders are queued and listed only from 09:00
 QUIET_END_HOUR = 20    # ... to 20:00 shop time
@@ -249,17 +252,41 @@ class Ledger:
                 self._stats["balances"][ident["id"]] = 0
             return dict(ident)
 
-    def update_customer(self, customer_id: str, *, say: str | None = None, lang: str | None = None) -> bool:
-        """Set the optional pronunciation (`say`, empty clears it) or the reminder language of a customer."""
+    def update_customer(self, customer_id: str, *, say: str | None = None, lang: str | None = None,
+                        display: Any = _UNSET, tags: Any = _UNSET, phone: Any = _UNSET) -> bool:
+        """Set the pronunciation (`say`, empty clears it), the reminder language, the name, the tags or the phone.
+
+        `display` renames the customer: the new key replaces the old one, which stays as an alias. `tags` replaces
+        the tag list and `phone` sets the number (None clears it). Raises `EditError` for a refused value; nothing
+        is changed then. Returns False for an unknown customer.
+        """
         with self._lock:
             c = self._customers().get(customer_id)
             if c is None:
                 return False
+            changes: dict[str, Any] = {}
+            if display is not _UNSET:
+                key = customer_key(display)
+                if key != c["key"]:
+                    for other in self._customers().values():
+                        if other["id"] != customer_id and (other["key"] == key or key in other.get("aliases", [])):
+                            raise EditError(409, "name_taken")
+                    aliases = [a for a in c.get("aliases", []) if a != key]
+                    if c["key"] not in aliases:
+                        aliases.append(c["key"])
+                    changes.update(key=key, display=display_name(key), aliases=aliases)
+            if tags is not _UNSET:
+                changes["tags"] = tag_list(tags)
+            if phone is not _UNSET:
+                changes["phone"] = phone_number(phone)
             if say is not None:
-                c["say"] = say.strip() or None
+                changes["say"] = say.strip() or None
             if lang is not None:
-                c["lang"] = lang if lang in ("hi", "en") else None
+                changes["lang"] = lang if lang in ("hi", "en") else None
+            c.update(changes)
             self._store_ident(customer_id, c)
+            if "key" in changes:
+                self._keys = None
             return True
 
     def label(self, customer_id: str) -> str:
@@ -544,6 +571,103 @@ class Ledger:
             body["device_ts"] = row["device_ts"]
             return body
 
+    # ---- hand edits (khata screens, CONTRACT 3.6) -------------------------------------------------------------
+    def _live_balance(self, customer_id: str) -> int:
+        """Whole rupees owed, read from the table inside the current transaction."""
+        row = self.conn.execute(
+            f"SELECT COALESCE(SUM({SIGNED}),0) AS b FROM events e WHERE e.customer_id=? AND {ACTIVE}",
+            (customer_id,)).fetchone()
+        return int(rupees(row["b"]))
+
+    def _portal_customer(self, customer_id: Any) -> dict:
+        c = self._customers().get(customer_id) if isinstance(customer_id, str) else None
+        if c is None:
+            raise EditError(404, "unknown_customer")
+        return c
+
+    def _portal_write(self, body: Callable[[datetime, str], tuple[list[int], list[int], set[str]]],
+                      now: datetime | None) -> dict:
+        """Run `body(now, trace_id)` in one transaction. It returns (reversed ids, saved ids, touched customers)."""
+        with self._lock:
+            now = now or datetime.now().astimezone()
+            trace_id = uuid.uuid4().hex[:16]
+            self._begin()
+            try:
+                reversed_ids, saved_ids, touched = body(now, trace_id)
+                self._refresh_stats(touched)
+                self.conn.execute("COMMIT")
+            except BaseException:
+                self.conn.execute("ROLLBACK")
+                self._cache = None
+                self._stats = None
+                raise
+            return {"reversed": reversed_ids, "saved": saved_ids, "touched": sorted(touched)}
+
+    def _insert_portal(self, kind: str, customer_id: str, amount: int, eff: str, now: datetime, trace_id: str,
+                       replaces_id: int | None = None) -> int:
+        stored, adjustment = ("payment", "writeoff") if kind == "writeoff" else (kind, None)
+        return self._insert_event(stored, customer_id, amount * 100, eff, now, utterance_id=None,
+                                  session_id=PORTAL_SESSION, trace_id=trace_id, replaces_id=replaces_id,
+                                  adjustment=adjustment)
+
+    def add_entry(self, customer_id: str, kind: str, amount: int, eff: str, *, if_balance: int | None = None,
+                  now: datetime | None = None) -> dict:
+        """Append one entry. With `if_balance`, refuses (`balance_changed`) when the balance has moved."""
+        def body(at: datetime, trace_id: str):
+            self._portal_customer(customer_id)
+            if if_balance is not None and self._live_balance(customer_id) != if_balance:
+                raise EditError(409, "balance_changed")
+            eid = self._insert_portal(kind, customer_id, amount, eff, at, trace_id)
+            return [], [eid], {customer_id}
+        return self._portal_write(body, now)
+
+    def _entry_row(self, event_id: int) -> sqlite3.Row:
+        """The active credit or payment with this id, else `unknown_entry` or `not_active`."""
+        row = self.conn.execute("SELECT e.* FROM events e WHERE e.id=?", (event_id,)).fetchone()
+        if row is None:
+            raise EditError(404, "unknown_entry")
+        if self._active_row(event_id, None) is None:
+            raise EditError(409, "not_active")
+        return row
+
+    def _reverse_row(self, row: sqlite3.Row, now: datetime, trace_id: str) -> None:
+        self._insert_event("reversal", row["customer_id"], row["amount_paise"], row["effective_date"], now,
+                           utterance_id=None, session_id=PORTAL_SESSION, trace_id=trace_id,
+                           supersedes_id=row["id"], adjustment=row["adjustment"])
+
+    def amend_entry(self, event_id: int, *, kind: str | None = None, amount: int | None = None,
+                    eff: str | None = None, customer_id: str | None = None, now: datetime | None = None) -> dict:
+        """Reverse an active entry and save the changed copy (`replaces_id` = the old id) in one transaction.
+
+        A field left as None keeps its value; the entry may move to another customer.
+        """
+        def body(at: datetime, trace_id: str):
+            row = self._entry_row(event_id)
+            target = self._portal_customer(customer_id) if customer_id is not None else None
+            old = (api_kind(row["kind"], row["adjustment"]), rupees(row["amount_paise"]), row["effective_date"],
+                   row["customer_id"])
+            new = (kind if kind is not None else old[0], amount if amount is not None else old[1],
+                   eff if eff is not None else old[2], target["id"] if target is not None else old[3])
+            if new == old:
+                raise EditError(400, "nothing_changed")
+            self._reverse_row(row, at, trace_id)
+            eid = self._insert_portal(new[0], new[3], new[1], new[2], at, trace_id, replaces_id=event_id)
+            return [event_id], [eid], {old[3], new[3]}
+        return self._portal_write(body, now)
+
+    def remove_entry(self, event_id: int, *, now: datetime | None = None) -> dict:
+        """Reverse one active entry."""
+        def body(at: datetime, trace_id: str):
+            row = self._entry_row(event_id)
+            self._reverse_row(row, at, trace_id)
+            return [event_id], [], {row["customer_id"]}
+        return self._portal_write(body, now)
+
+    def active_ids(self, ids: list[int]) -> set[int]:
+        """The ids among `ids` that are still active entries."""
+        with self._lock:
+            return {i for i in ids if self._active_row(i, None) is not None}
+
     # ---- reads ------------------------------------------------------------------------------------------------
     def _active_row(self, event_id: Any, session_id: str | None) -> sqlite3.Row | None:
         """The event with this id when it is active and belongs to the session, else None."""
@@ -681,7 +805,7 @@ class Ledger:
             "id": row["id"], "kind": api_kind(row["kind"], row["adjustment"]),
             "customer": {"id": c["id"], "display": c["display"], "tags": list(c["tags"])},
             "amount": rupees(row["amount_paise"]), "date": row["effective_date"], "ts": row["ts"],
-            "reversed": bool(row["reversed"]), "reversal_of": None,
+            "reversed": bool(row["reversed"]), "reversal_of": None, "replaces": row["replaces_id"],
         }
 
     _ENTRY_SQL = ("SELECT e.*, EXISTS(SELECT 1 FROM events r WHERE r.kind='reversal' AND r.supersedes_id=e.id) "
@@ -711,12 +835,21 @@ class Ledger:
             rows = self.conn.execute(sql + " LIMIT ?", (*args, limit)).fetchall()
             return [self._entry(r) for r in rows]
 
+    def _summary(self, c: dict, balance: int) -> dict:
+        return {"id": c["id"], "display": c["display"], "tags": list(c["tags"]), "balance": balance,
+                "reminders_opt_in": c["reminders_opt_in"], "lang": c.get("lang") or "hi",
+                "say": c.get("say"), "phone_hint": phone_hint(c.get("phone"))}
+
     def customer_summaries(self) -> list[dict]:
         with self._lock:
-            balances = self.balances()
-            return [{"id": c["id"], "display": c["display"], "tags": list(c["tags"]), "balance": balances[c["id"]],
-                     "reminders_opt_in": c["reminders_opt_in"], "lang": c.get("lang") or "hi",
-                     "say": c.get("say")} for c in self._customers().values()]
+            balances = self._stats_now()["balances"]
+            return [self._summary(c, balances.get(c["id"], 0)) for c in self._customers().values()]
+
+    def customer_summary(self, customer_id: str) -> dict | None:
+        """One `/api/customers` item, built from the in-memory customer and balance caches."""
+        with self._lock:
+            c = self._customers().get(customer_id)
+            return None if c is None else self._summary(c, self._stats_now()["balances"].get(customer_id, 0))
 
     def balance_items(self, customer_ids: list[str]) -> list[dict]:
         """`[{"customer_id","display","balance"}]` for the given customers, in order, without repeats."""

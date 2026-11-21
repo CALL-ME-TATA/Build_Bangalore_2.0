@@ -1,7 +1,7 @@
 // Typed REST calls (docs/CONTRACT.md section 3 and server/app/main.py). All amounts are whole rupees.
 // The access code from `?code=` in the page URL is sent as the X-Access-Code header.
 // In mock mode (see ./session/mode.ts) the same calls are answered by the in-memory mock ledger.
-import type { Entry } from './session/types';
+import type { BalanceInfo, Entry, EntryKind } from './session/types';
 import { accessCode } from './accessCode';
 import { sessionMode } from './session/mode';
 
@@ -17,6 +17,8 @@ export interface Customer {
   /** Positive: the customer owes the shop. Negative: paid in advance. */
   balance: number;
   reminders_opt_in: boolean;
+  /** Last four digits of the stored phone number ("•••• 3210"), or null. The full number is never sent. */
+  phone_hint?: string | null;
 }
 
 export interface Reminder {
@@ -31,9 +33,12 @@ export interface Reminder {
 
 export class ApiError extends Error {
   status: number;
-  constructor(path: string, status: number) {
+  /** The server's error code (`detail`, e.g. `name_taken`), or null when the body had none. */
+  detail: string | null;
+  constructor(path: string, status: number, detail: string | null = null) {
     super(`${path}: ${status}`);
     this.status = status;
+    this.detail = detail;
   }
 }
 
@@ -48,7 +53,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     ...init,
     headers: headers((init.headers as Record<string, string>) ?? {}),
   });
-  if (!res.ok) throw new ApiError(path, res.status);
+  if (!res.ok) {
+    let detail: string | null = null;
+    try {
+      const body = (await res.json()) as { detail?: unknown };
+      if (typeof body.detail === 'string') detail = body.detail;
+    } catch {
+      // No JSON body: the status alone is the error.
+    }
+    throw new ApiError(path, res.status, detail);
+  }
   return (await res.json()) as T;
 }
 
@@ -114,4 +128,68 @@ export async function setReminderOptIn(customerId: string, optIn: boolean, phone
     body: JSON.stringify(body),
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+/** The answer of the entry calls (contract 3.6): the entries touched and the balances after them. */
+export interface EntryChange {
+  ok: boolean;
+  entries: Entry[];
+  balances: BalanceInfo[];
+}
+
+export interface NewEntryBody {
+  customer_id: string;
+  kind: EntryKind;
+  amount: number;
+  /** YYYY-MM-DD shop day; the server uses today when absent. */
+  date?: string;
+  /** Refused with 409 `balance_changed` when the customer's balance is no longer this figure. */
+  if_balance?: number;
+}
+
+export interface AmendBody {
+  kind?: EntryKind;
+  amount?: number;
+  date?: string;
+  customer_id?: string;
+}
+
+export interface CustomerPatch {
+  display?: string;
+  tags?: string[];
+  /** A normalised 10-digit number, or null to clear it. */
+  phone?: string | null;
+}
+
+function jsonPost<T>(path: string, body?: unknown): Promise<T> {
+  return request<T>(path, {
+    method: 'POST',
+    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+/** POST /api/entries: one entry written by hand. */
+export async function addEntry(body: NewEntryBody): Promise<EntryChange> {
+  if (isMock()) return (await mock()).addManual(body);
+  return jsonPost<EntryChange>('/api/entries', body);
+}
+
+/** POST /api/entries/{id}/amend: reverses the entry and saves the changed copy. Only changed fields are sent. */
+export async function amendEntry(id: Entry['id'], body: AmendBody): Promise<EntryChange> {
+  if (isMock()) return (await mock()).amend(id, body);
+  return jsonPost<EntryChange>(`/api/entries/${encodeURIComponent(String(id))}/amend`, body);
+}
+
+/** POST /api/entries/{id}/remove: reverses that one entry; it stays visible, struck through. */
+export async function removeEntry(id: Entry['id']): Promise<EntryChange> {
+  if (isMock()) return (await mock()).removeEntry(id);
+  return jsonPost<EntryChange>(`/api/entries/${encodeURIComponent(String(id))}/remove`);
+}
+
+/** POST /api/customers/{id}: renames the customer, replaces the tags, sets or clears the phone number. */
+export async function updateCustomer(id: string, patch: CustomerPatch): Promise<Customer> {
+  if (isMock()) return (await mock()).updateCustomer(id, patch);
+  const d = await jsonPost<{ customer: Customer }>(`/api/customers/${encodeURIComponent(id)}`, patch);
+  return d.customer;
 }

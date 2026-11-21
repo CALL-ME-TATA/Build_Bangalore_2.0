@@ -15,6 +15,8 @@ export interface Entry {
   ts: string;
   reversed: boolean;
   reversal_of: number | string | null;
+  /** The id of the entry this one corrected; null when it corrects nothing. Absent on older servers. */
+  replaces?: number | string | null;
 }
 
 export type EntryKind = 'credit' | 'payment' | 'writeoff';

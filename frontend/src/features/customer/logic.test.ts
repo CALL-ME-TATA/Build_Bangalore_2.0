@@ -169,3 +169,77 @@ describe('Timeline markup', () => {
     expect(html.match(/<h2/g)?.length).toBe(2);
   });
 });
+
+describe('customerTimeline pairing by replaces', () => {
+  const withReplaces = (e: Entry, replaces: number | null): Entry => ({ ...e, replaces });
+
+  test('a correction pairs with the entry it names, even on another date', () => {
+    const e = [
+      entry(1, 'r', 'credit', 340, at(19, 10), '2026-11-19', true),
+      entry(2, 'r', 'payment', 50, at(20, 10), '2026-11-20'),
+      withReplaces(entry(3, 'r', 'credit', 430, at(21, 9), '2026-11-21'), 1),
+    ];
+    const g = customerTimeline(e, 'r', NOW, 'hi');
+    expect(g.map((x) => x.date)).toEqual(['2026-11-21', '2026-11-20']);
+    expect(g[0]?.items.map((i) => [i.entry.id, i.replaced?.id ?? null])).toEqual([[3, 1]]);
+    expect(g[1]?.items.map((i) => [i.entry.id, i.replaced?.id ?? null])).toEqual([[2, null]]);
+  });
+
+  test('the id wins over position; an entry with replaces null still pairs by position', () => {
+    const e = [
+      entry(1, 'r', 'credit', 100, at(21, 9), '2026-11-21', true), // removed; entry 3 sits right after it
+      entry(2, 'r', 'credit', 200, at(21, 9, 1), '2026-11-21', true), // replaced by 4
+      withReplaces(entry(3, 'r', 'credit', 300, at(21, 9, 2), '2026-11-21'), null),
+      withReplaces(entry(4, 'r', 'credit', 250, at(21, 9, 3), '2026-11-21'), 2),
+    ];
+    const items = customerTimeline(e, 'r', NOW, 'hi')[0]?.items ?? [];
+    expect(items.map((i) => [i.entry.id, i.replaced?.id ?? null])).toEqual([
+      [4, 2],
+      [3, 1],
+    ]);
+  });
+
+  test('a chain keeps every entry visible', () => {
+    const e = [
+      entry(1, 'r', 'credit', 100, at(21, 9), '2026-11-21', true),
+      withReplaces(entry(2, 'r', 'credit', 200, at(21, 9, 1), '2026-11-21', true), 1),
+      withReplaces(entry(3, 'r', 'credit', 300, at(21, 9, 2), '2026-11-21'), 2),
+    ];
+    const shown = customerTimeline(e, 'r', NOW, 'hi').flatMap((g) => g.items.flatMap((i) => [i.entry.id, ...(i.replaced ? [i.replaced.id] : [])]));
+    expect(shown.sort()).toEqual([1, 2, 3]);
+  });
+
+  test('a correction moved here from another customer shows no old amount; the old row stays on the other screen', () => {
+    const old: Entry = { ...entry(1, 'x', 'credit', 340, at(21, 9), '2026-11-21', true) };
+    const moved = withReplaces(entry(2, 'r', 'credit', 340, at(21, 10), '2026-11-21'), 1);
+    expect(customerTimeline([old, moved], 'r', NOW, 'hi')[0]?.items.map((i) => [i.entry.id, i.replaced?.id ?? null])).toEqual([[2, null]]);
+    expect(customerTimeline([old, moved], 'x', NOW, 'hi')[0]?.items.map((i) => [i.entry.id, i.replaced?.id ?? null])).toEqual([[1, null]]);
+  });
+
+  test('a replaces that names nothing loaded falls back to no pairing, not to position', () => {
+    const e = [
+      entry(1, 'r', 'credit', 100, at(21, 9), '2026-11-21', true),
+      withReplaces(entry(2, 'r', 'credit', 200, at(21, 9, 1), '2026-11-21'), 99),
+    ];
+    const items = customerTimeline(e, 'r', NOW, 'hi')[0]?.items ?? [];
+    expect(items.map((i) => [i.entry.id, i.replaced?.id ?? null])).toEqual([
+      [2, null],
+      [1, null],
+    ]);
+  });
+});
+
+describe('Timeline edit rows', () => {
+  test('active rows are buttons with a pencil; removed rows are plain; no onEdit means no buttons', () => {
+    const entries = [
+      entry(1, 'r', 'credit', 340, at(21, 9), '2026-11-21', true),
+      entry(2, 'r', 'credit', 430, at(21, 10), '2026-11-21'),
+    ];
+    const groups = customerTimeline(entries, 'r', NOW, 'hi');
+    const on = renderToStaticMarkup(createElement(Timeline, { groups, lang: 'hi', now: NOW, cut: false, onEdit: () => undefined }));
+    expect(on.match(/<button/g)?.length).toBe(1);
+    expect(on).toContain('id="entry-edit-2"');
+    const off = renderToStaticMarkup(createElement(Timeline, { groups, lang: 'hi', now: NOW, cut: false }));
+    expect(off).not.toContain('<button');
+  });
+});
