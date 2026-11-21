@@ -45,9 +45,16 @@ class KafkaNotifier(Notifier):
     def _kafka_producer(self):
         from kafka import KafkaProducer
 
-        return KafkaProducer(bootstrap_servers=self.bootstrap, acks=1, linger_ms=5, retries=3,
+        # With no broker, connecting (bootstrap_timeout_ms) and a send (max_block_ms) give up after 5 s instead of the
+        # library's 30 s and 60 s, so the failure is logged soon and the thread retries with its backoff.
+        return KafkaProducer(bootstrap_servers=self.bootstrap, acks=1, linger_ms=5, retries=3, max_block_ms=5000,
+                             bootstrap_timeout_ms=5000,
                              value_serializer=lambda v: json.dumps(v, separators=(",", ":")).encode(),
                              key_serializer=lambda k: k.encode() if k else None)
+
+    @staticmethod
+    def _delivery_failed(exc: BaseException) -> None:
+        log.warning("kafka delivery failed: %s", type(exc).__name__)
 
     def publish(self, event: dict[str, Any]) -> None:
         try:
@@ -68,7 +75,10 @@ class KafkaNotifier(Notifier):
                     backoff = 1.0
                 # Keyed by shop + customer, so one customer's events stay in order on one partition.
                 key = f"{event.get('shop', '')}:{event.get('customer_id', '')}"
-                self._producer.send(self.topic, key=key, value=event)
+                sent = self._producer.send(self.topic, key=key, value=event)
+                on_error = getattr(sent, "add_errback", None)  # the send is acknowledged later: log a refusal
+                if on_error is not None:
+                    on_error(self._delivery_failed)
             except Exception as exc:  # broker down or refused: drop this event, retry the connection later
                 log.warning("kafka publish failed: %s", type(exc).__name__)
                 self._producer = None

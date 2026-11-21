@@ -923,6 +923,17 @@ class Ledger:
                 rid = int(row["id"]) if row else None
             return rid
 
+    def reminder_items(self, reminder_ids: list[int]) -> list[dict]:
+        """`[{"reminder_id","customer_id","amount"}]` for outbox rows, in id order (amount in whole rupees)."""
+        if not reminder_ids:
+            return []
+        marks = ",".join("?" * len(reminder_ids))
+        with self._lock:
+            rows = self.conn.execute(f"SELECT id, customer_id, amount_paise FROM reminder_outbox WHERE id IN ({marks})"
+                                     " ORDER BY id", list(reminder_ids)).fetchall()
+        return [{"reminder_id": r["id"], "customer_id": r["customer_id"], "amount": rupees(r["amount_paise"])}
+                for r in rows]
+
     def queue_reminders(self, now: datetime) -> list[int]:
         """Add one pending outbox row per opted-in customer who owes money and has no pending row.
 

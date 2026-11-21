@@ -327,8 +327,8 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
         if in_quiet_hours(now):
             return {"queued": [], "quiet_hours": True}
         queued = c.ledger.queue_reminders(now)
-        for rid in queued:
-            c.pipeline.notify({"type": "reminder_queued", "reminder_id": rid})
+        for item in c.ledger.reminder_items(queued):  # same event as a reminder queued by voice
+            c.pipeline.notify({"type": "reminder_queued", **item})
         return {"queued": queued, "quiet_hours": False}
 
     @app.post("/api/customers/{customer_id}/reminders", dependencies=guarded)
