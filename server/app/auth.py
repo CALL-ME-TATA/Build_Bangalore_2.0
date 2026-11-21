@@ -1,7 +1,8 @@
 """Google sign-in (OAuth 2.0 authorization code flow, done on the server).
 
 Switched on when GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set. Only emails in ALLOWED_EMAILS get in: the
-ledger is one shop's money, so an empty list lets nobody in rather than everybody.
+ledger is one shop's money, so an empty list lets nobody in rather than everybody. ALLOWED_EMAILS=* lets any
+verified Google account in; each account then has its own khata (main.py), so nobody sees another's ledger.
 
 The signed-in user is kept in an HttpOnly cookie signed with HMAC-SHA256 (key in data/session.key, created on
 first run, or SESSION_SECRET). No token from Google is stored: the code is exchanged once for the verified email.
@@ -75,7 +76,10 @@ def verify(token: str | None, secret: bytes, now: float | None = None) -> dict |
 
 
 def allowed(email: str, allowed_emails: str) -> bool:
+    """True for an email in the list; "*" in the list allows every (verified) Google account."""
     wanted = {e.strip().lower() for e in allowed_emails.split(",") if e.strip()}
+    if "*" in wanted:
+        return bool(email.strip())
     return email.strip().lower() in wanted
 
 

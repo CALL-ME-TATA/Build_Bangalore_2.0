@@ -107,6 +107,16 @@ _MEASURE_FOLDS = frozenset(fold(romanise_word(w) if is_devanagari(w) else w) for
 # A number before one of these counts runs, wickets or distance: never an amount, and the sentence is not about
 # the khata at all ("250 run bane", "4 wicket liye"), so it is refused rather than asked "Kitne ka?".
 _NONMONEY_FOLDS = frozenset(fold(w) for w in "run runs wicket wickets over overs goal goals km kilometer kilometre".split())
+# A number directly before one of these counts time, never money (1.19). "N din pehle" and "N baje" are read
+# earlier as a date and a time of day.
+_TIME_UNIT_FOLDS = frozenset(fold(romanise_word(w) if is_devanagari(w) else w) for w in (
+    "din dino dinon hafta hafte haftay mahina mahine saal sal ghanta ghante minute minat baje tarikh day days week "
+    "weeks month months year years hour hours दिन दिनों हफ्ता हफ्ते महीना महीने साल घंटा घंटे मिनट बजे तारीख").split())
+# Words that make a sentence ask something (1.19). A trailing "?" does too, and so does "how much".
+_ASK_FOLDS = frozenset(fold(romanise_word(w) if is_devanagari(w) else w) for w in (
+    "kitna kitni kitne kitnaa kab kaun kon kaunse kaunsa kaunsi konse konsa konsi kisne kisko kiska kiski kiske kya "
+    "kyaa kaise kahan kahaan kyun kyon list batao bataao bataiye dikhao dikhaiye when who which what कितना कितनी "
+    "कितने कब कौन कौनसा कौनसे कौनसी किसने किसको किसका किसकी किसके क्या कैसे कहाँ कहां क्यों बताओ बताइए दिखाओ").split())
 # A number right after one of these is an identifier ("phone number 98", "class 8", "flat 302"): ignored like a time.
 _ID_BEFORE_FOLDS = frozenset(fold(w) for w in "number no class flat room plot sector gali ward house mobile".split())
 # Out of scope (1.14 I01 to I03): supplier, expense and cash-sale words.
@@ -605,6 +615,11 @@ def _mark(toks: list[Tok], keep_fillers: bool = False) -> list[Tok]:
             near_cur = (prev_tok is not None and prev_tok.cls == "cur") or (nxt is not None and nxt.cls == "cur")
             if prev_tok is not None and fold(prev_tok.rom) in _ID_BEFORE_FOLDS and not near_cur:
                 res.append(Tok(" ".join(x.raw for x in span), "fill"))  # "number 98", "class 8": an identifier
+                i = j
+                continue
+            if nxt is not None and fold(nxt.rom) in _TIME_UNIT_FOLDS:
+                # "30 din se purana", "do hafte", "5 baje": a count of time, never an amount (1.19)
+                res.append(Tok(" ".join(x.raw for x in span), "fill"))
                 i = j
                 continue
             if nxt is not None and (fold(nxt.rom) in _MEASURE_FOLDS or fold(nxt.rom) in _NONMONEY_FOLDS
@@ -3450,14 +3465,83 @@ def _strict_gate(result: dict, d: _Draft, ctx: dict) -> dict:
                     question=_confirm_question(confirm, events))
 
 
+def _asks(toks: list[Tok]) -> bool:
+    """The sentence asks something: a question word or a trailing "?" (1.19)."""
+    words = [t for t in toks if t.cls != "sep"]
+    if any(fold(t.rom) in _ASK_FOLDS for t in words):
+        return True
+    if any(a.raw == "how" and b.raw == "much" for a, b in zip(words, words[1:])):
+        return True
+    return bool(toks) and toks[-1].raw == "?"
+
+
+def _amount_choice_only(d: _Draft) -> bool:
+    """The sentence is only a choice of two amounts ("teen sau chaalis ya saat sau chaalis?"). With a trailing "?"
+    and no question word it still asks which amount (A12); the entry it starts is read back before it is saved."""
+    sig = _sig(d.marked)
+    return bool(sig) and all(t.cls == "amt" for t in sig) and any(t.alt for t in sig)
+
+
+_FIELD_QUESTIONS = {"missing_amount", "missing_customer", "ambiguous_direction", "unclear_date", "same_name",
+                    "confusable_number", "new_customer", "plausibility"}
+
+
+def _question_not_entry(d: _Draft, ctx: dict) -> dict:
+    """A sentence that asks something and holds no complete entry: the query it matches, else not_ledger (1.19)."""
+    sig = [t for t in _sig(d.marked) if t.cls != "amt"]
+    q = _detect_query(sig, ctx) if sig and not any(t.cls == "amt" for t in _sig(d.marked)) else None
+    d.events = None
+    d.confirm = None
+    if q is not None:
+        return _query_result(q, ctx, d)
+    d.action = "append"
+    return _rejected("not_ledger")
+
+
+def _is_entry_outcome(result: dict | None, d: _Draft) -> bool:
+    """An entry, or a question about an entry, would come out of this draft (None: it is finalised as entries)."""
+    if result is None:
+        return d.action == "append"
+    if result.get("status") == "ok":
+        return result.get("action") == "append"
+    if result.get("status") == "needs_clarification":
+        pending = result.get("pending")
+        return isinstance(pending, dict) and pending.get("action") == "append"
+    if result.get("status") == "rejected" and result.get("reason") == "negated":
+        # "... kuch nahi diya unki list batao": a list asked for, not a refused entry
+        return not any(t.cls == "amt" for t in _sig(d.marked))
+    return False
+
+
 def _fresh(toks: list[Tok], utterance: str, today: date, ctx: dict) -> tuple[dict, _Draft]:
     d = _draft(toks, today, ctx)
+    asks = _asks(toks)
+    if asks and not d.complete and _is_entry_outcome(d.result, d) and not _amount_choice_only(d):
+        # A question is never an entry or a pending entry (1.19).
+        result = _question_not_entry(d, ctx)
+        return _noise_gate(_carry_unsure(_strict_gate(result, d, ctx), d, ctx), ctx), d
     if d.result is not None:
-        return _noise_gate(_carry_unsure(_strict_gate(d.result, d, ctx), d, ctx), ctx), d
-    events = d.events or []
-    checker = _confusable_checker(utterance, events, today, ctx)
-    result = _finalize(events, "append", ctx, confusable=checker, confirm=d.confirm, carry_form=d.carry_form)
+        result = d.result
+    else:
+        events = d.events or []
+        checker = _confusable_checker(utterance, events, today, ctx)
+        result = _finalize(events, "append", ctx, confusable=checker, confirm=d.confirm, carry_form=d.carry_form)
+    if asks:
+        result = _read_back_answers(result)
     return _noise_gate(_carry_unsure(_strict_gate(result, d, ctx), d, ctx), ctx), d
+
+
+def _read_back_answers(result: dict) -> dict:
+    """A question raised by a sentence that holds a question word is answered and then read back for a yes before
+    anything is saved (1.19): the pending result carries a `hearsay` confirmation for the answer to complete."""
+    pending = result.get("pending")
+    if (result.get("status") != "needs_clarification" or not isinstance(pending, dict)
+            or pending.get("action") != "append" or pending.get("reason") not in _FIELD_QUESTIONS
+            or isinstance(pending.get("confirm"), dict)):
+        return result
+    result = dict(result, pending=dict(pending, confirm={"type": "hearsay"}, asked_question=True))
+    result.setdefault("confirm", {"type": "hearsay"})
+    return result
 
 
 def _carry_unsure(result: dict, d: _Draft, ctx: dict) -> dict:

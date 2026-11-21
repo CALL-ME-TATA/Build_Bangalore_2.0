@@ -1,4 +1,4 @@
-# CONTRACT v1.8 (2026-11-21)
+# CONTRACT v1.12 (2026-11-22)
 
 The binding interface specification for KhataVaani. Changes go through the tech lead.
 Where this file disagrees with an older note, this file wins.
@@ -805,6 +805,34 @@ English
 - `paid in full`, `paid everything`, `paid the full amount`, `cleared everything` → settle (H04);
   `write off X's balance` → write-off (H06). `X paid N not M` with no earlier entry → `confirm_entry` `hearsay`
   for N.
+
+### 1.19 A question is never an entry (v1.12; overrides anything above that disagrees)
+
+Found by running hard sentences with the LLM fallback on (2026-11-22): two questions became entries.
+`Pichli baar Mohan ne kitna diya tha aur kab?` became a payment with a missing amount, and the answer `300` saved
+a ₹300 payment without a read-back. `Meri kul udhaari kitni hai, aur usme se kitna 30 din se purana hai?` became a
+₹30 credit with a missing customer.
+
+- A sentence that asks something never becomes an entry or a pending entry (no `missing_amount`,
+  `missing_customer`, `ambiguous_direction`, `unclear_date` or `confirm_entry` question about an entry). A sentence
+  asks something when it has a question word (`kitna`, `kitni`, `kitne`, `kab`, `kaun`, `kaunse`, `kisne`, `kisko`,
+  `kiska`, `kya`, `kaise`, `kahan`, `kyun`, `list`, `batao`, `bataiye`, `dikhao`, `how much`, `when`, `who`,
+  `which`, `what`) or ends in `?`, and it has no complete entry (customer, amount and direction all spoken).
+  - When it matches a query of 1.7 or 1.14 it is that query (`Meri kul udhaari kitni hai` → the outstanding total;
+    `Suresh ka kitna baaki hai?` → the balance, with the same-name question when needed).
+  - Otherwise it is rejected `not_ledger`: nothing is asked about an entry and nothing is saved.
+  - A complete entry that happens to hold a question word stays an entry under the usual rules (it is confirmed
+    when strict mode or another rule asks).
+  - A sentence that is only a choice between two amounts and ends in `?` without a question word
+    (`teen sau chaalis ya saat sau chaalis?`) is the shopkeeper's own doubt, not a question to the app: it keeps the
+    confusable-number question of 1.14 A12, and the entry is read back before it is saved.
+- A number spoken directly before a time unit is never an amount: `din`, `dino`, `dinon`, `hafta`, `hafte`,
+  `haftay`, `mahina`, `mahine`, `saal`, `ghanta`, `ghante`, `minute`, `minat`, `baje`, `tarikh`, `day`, `days`,
+  `week`, `weeks`, `month`, `months`, `year`, `years`, `hour`, `hours` (`30 din se purana`, `do hafte`, `5 baje`).
+  Relative dates (`3 din pehle`) keep working as dates.
+- An amount, customer or direction given in answer to a question that the first sentence raised is read back for a
+  yes (`confirm_entry`) before anything is saved whenever that first sentence held a question word. This is a second
+  guard behind the first rule.
 
 ## 2. Ledger (`server/app/ledger.py`), SQLite with field-level AES-256-GCM
 

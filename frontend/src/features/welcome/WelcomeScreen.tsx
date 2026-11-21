@@ -81,7 +81,7 @@ function AccessNote() {
   return (
     <span className="flex items-center gap-2 text-small text-ink-2">
       <Lock aria-hidden="true" size={16} strokeWidth={1.7} />
-      {data.user ? `Login: ${data.user.email}` : 'Sirf dukaan ke chune hue Google accounts'}
+      {data.user ? `Login: ${data.user.email}` : 'Google account se; har account ka apna khata'}
     </span>
   );
 }
@@ -190,7 +190,7 @@ const FAQ = [
   { id: 'faq-wrong', q: 'Agar galat sun liya to?', a: 'Jab pakka nahi hota, woh poochta hai. Save hone ke baad galti dikhe to “Nahi, 430” boliye, ya “undo karo” se pichli entry hata dijiye.' },
   { id: 'faq-lang', q: 'Kaunsi bhasha chalti hai?', a: 'Hindi, Hinglish aur English. Rakam shabdon mein bhi chalti hai: dedh sau, dhai hazaar, saadhe teen sau.' },
   { id: 'faq-names', q: 'Ek naam ke do grahak hon to?', a: 'Woh poochta hai: “Aap kaunse Diwakar ki baat kar rahe hain: Diwakar, Diwakar Sharma ya koi aur?” Naye grahak ki pehchaan bhi poochta hai, jaise chai wale.' },
-  { id: 'faq-data', q: 'Mera data kahan rehta hai?', a: 'Aapke apne server par, encrypted. Login sirf dukaan ke chune hue Google accounts se hota hai. Har sudhaar nayi entry ke roop mein judta hai, purani entry kabhi nahi mitti.' },
+  { id: 'faq-data', q: 'Mera data kahan rehta hai?', a: 'Aapke apne server par, encrypted. Login Google account se hota hai, aur har account ka khata alag rehta hai: koi doosre ka khata nahi dekh sakta. Har sudhaar nayi entry ke roop mein judta hai, purani entry kabhi nahi mitti.' },
   { id: 'faq-net', q: 'Internet chala jaaye to?', a: 'Bolne ke liye internet chahiye. Bina internet ke type ki hui lines phone par encrypted rehti hain aur net aate hi save hoti hain.' },
   { id: 'faq-remind', q: 'Grahak ko reminder kaise jaata hai?', a: 'SMS se, aur sirf un grahakon ko jinhone haan kaha ho, jab aap “Reminder bhejein” dabayein. Ek grahak ko din mein ek hi SMS jaata hai. Apne aap kuch nahi jaata.' },
 ];

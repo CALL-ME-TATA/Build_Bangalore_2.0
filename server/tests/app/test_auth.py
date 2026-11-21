@@ -87,6 +87,22 @@ def test_empty_allow_list_lets_nobody_in(tmp_path, monkeypatch):
         assert sign_in(c).headers["location"] == "/#/welcome?login=not_allowed"
 
 
+def test_star_lets_any_verified_account_in_each_with_its_own_khata(tmp_path, monkeypatch):
+    assert auth.allowed("Anyone@Example.com", "*") and auth.allowed("x@gmail.com", "owner@gmail.com, *")
+    assert not auth.allowed("", "*")
+    google_says(monkeypatch, email="stranger@gmail.com")
+    with make(tmp_path, **{**ON, "allowed_emails": "*"}) as c:
+        assert sign_in(c).headers["location"] == "/#/"
+        assert c.get("/api/customers").json()["customers"] == []  # a fresh khata of their own
+        assert c.app.state.tenant("stranger@gmail.com").ledger.path.parent.parent.name == "users"
+
+
+def test_star_still_turns_away_unverified_emails(tmp_path, monkeypatch):
+    google_says(monkeypatch, email="stranger@gmail.com", email_verified=False)
+    with make(tmp_path, **{**ON, "allowed_emails": "*"}) as c:
+        assert sign_in(c).headers["location"] == "/#/welcome?login=not_allowed"
+
+
 def test_wrong_state_is_refused(tmp_path, monkeypatch):
     google_says(monkeypatch, email="owner@gmail.com")
     with make(tmp_path, **ON) as c:
