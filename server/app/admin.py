@@ -30,6 +30,10 @@ def purge(settings: Settings) -> list[str]:
     if settings.tts_cache_dir.exists():
         shutil.rmtree(settings.tts_cache_dir, ignore_errors=True)
         removed.append(settings.tts_cache_dir.name + "/")
+    users = settings.data_dir / "users"  # one ledger per signed-in Google account
+    if users.exists():
+        shutil.rmtree(users, ignore_errors=True)
+        removed.append("users/")
     return removed
 
 

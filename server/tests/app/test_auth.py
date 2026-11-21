@@ -114,3 +114,55 @@ def test_websocket_needs_a_sign_in(tmp_path):
         with pytest.raises(Exception):
             with c.websocket_connect("/ws/session") as ws:
                 ws.receive_json()
+
+
+# ---- one khata per Google account -------------------------------------------------------------------------------
+def _signed_in_client(tmp_path, monkeypatch, email):
+    google_says(monkeypatch, email=email)
+    c = make(tmp_path, **ON)
+    c.__enter__()
+    sign_in(c)
+    return c
+
+
+def test_each_account_has_its_own_khata(tmp_path, monkeypatch):
+    from datetime import datetime
+    owner = _signed_in_client(tmp_path, monkeypatch, "owner@gmail.com")
+    try:
+        app = owner.app
+        now = datetime.now().astimezone()
+        mine = app.state.tenant("owner@gmail.com").ledger
+        c = mine.create_customer("ramesh", tags=[], now=now)
+        mine.apply({"action": "append", "events": [{"kind": "credit", "customer": "ramesh", "customer_id": c["id"],
+                                                     "amount": 340, "date": now.date().isoformat()}]},
+                   now=now, session_id="s1")
+        names = [x["display"] for x in owner.get("/api/customers").json()["customers"]]
+        assert names == ["Ramesh"]
+
+        # The partner signs in on another phone (same server): an empty khata of their own.
+        google_says(monkeypatch, email="partner@gmail.com")
+        partner = TestClient(app, base_url="http://127.0.0.1:8000")
+        sign_in(partner)
+        assert partner.get("/api/customers").json()["customers"] == []
+        assert partner.get("/api/ledger").json()["entries"] == []
+        assert owner.get("/api/ledger").json()["entries"][0]["amount"] == 340
+
+        # Separate files, named by a hash (no email on disk), and the one-shop ledger is untouched.
+        theirs = app.state.tenant("partner@gmail.com").ledger
+        assert mine.path != theirs.path and mine.path.parent.parent.name == "users"
+        assert "owner" not in str(mine.path) and "@" not in str(mine.path)
+        assert app.state.tenant("OWNER@gmail.com ").ledger is mine  # same account whatever the case
+    finally:
+        owner.__exit__(None, None, None)
+
+
+def test_signed_in_voice_socket_opens_on_the_accounts_khata(tmp_path, monkeypatch):
+    owner = _signed_in_client(tmp_path, monkeypatch, "owner@gmail.com")
+    try:
+        # The test client does not send its cookie jar on a socket; a browser sends the session cookie itself.
+        cookie = f"{auth.SESSION_COOKIE}={owner.cookies.get(auth.SESSION_COOKIE)}"
+        with owner.websocket_connect("/ws/session", headers={"cookie": cookie}) as ws:
+            ws.send_json({"type": "hello", "lang": "hi"})
+            assert ws.receive_json()["type"]  # accepted (not closed with 1008)
+    finally:
+        owner.__exit__(None, None, None)

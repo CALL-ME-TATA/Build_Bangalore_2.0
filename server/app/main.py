@@ -5,9 +5,11 @@ Run from server/: `python -m uvicorn app.main:app --port 8000`. The ledger opens
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import logging
 import os
+import threading
 import time
 from contextlib import asynccontextmanager
 from dataclasses import fields
@@ -136,9 +138,11 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
             fresh = get_settings()
             for f in fields(cfg):
                 setattr(cfg, f.name, getattr(fresh, f.name))
-        ledger = Ledger(cfg.db_path, Crypto(load_key(cfg.ledger_key, cfg.key_path)))
+        crypto = Crypto(load_key(cfg.ledger_key, cfg.key_path))
+        ledger = Ledger(cfg.db_path, crypto)
         llm_parse = from_llm_settings(default_parse, cfg) if parse is None else None
         pipeline = Pipeline(ledger, cfg, parse=parse or llm_parse, number_to_words=number_to_words, now=now)
+        shared["crypto"], shared["parse"] = crypto, parse or llm_parse
         if parse is None:
             warm_default_parser()  # the vocabulary loads lazily; load it before the first turn
         holder["ctx"] = AppContext(
@@ -155,10 +159,43 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
             if warm_task is not None and not warm_task.done():
                 warm_task.cancel()
             ledger.close()
+            with tenants_lock:
+                for t in tenants.values():
+                    t.ledger.close()
+                tenants.clear()
 
     app = FastAPI(title="KhataVaani", lifespan=lifespan)
 
-    def ctx() -> AppContext:
+    shared: dict = {}
+    # One khata per signed-in Google account: data/users/<sha256(email)>/khata.db, with its own conversation state
+    # and session resume. Without sign-in there is one shop: the ledger at LEDGER_DB.
+    tenants: dict[str, AppContext] = {}
+    tenants_lock = threading.Lock()
+
+    def tenant_id(email: str) -> str:
+        return hashlib.sha256(email.strip().lower().encode()).hexdigest()[:24]  # no email in folder names
+
+    def tenant(email: str) -> AppContext:
+        tid = tenant_id(email)
+        with tenants_lock:
+            t = tenants.get(tid)
+            if t is None:
+                base = holder["ctx"]
+                led = Ledger(cfg.data_dir / "users" / tid / "khata.db", shared["crypto"])
+                pipe = Pipeline(led, cfg, parse=shared["parse"], number_to_words=number_to_words, now=now)
+                t = tenants[tid] = AppContext(settings=cfg, ledger=led, pipeline=pipe, stt_factory=base.stt_factory,
+                                              tts_factory=base.tts_factory)
+            return t
+
+    app.state.tenant = tenant  # for tests and admin scripts: the khata of one account
+
+    def ctx(conn: Request | WebSocket | None = None) -> AppContext:
+        """The khata of the signed-in account (sign-in on), else the one shop ledger."""
+        if cfg.auth_enabled and conn is not None:
+            user = signed_in(conn.cookies)
+            if user is None:  # require_access and the socket check refuse first; never fall back to another khata
+                raise HTTPException(401, "sign in required")
+            return tenant(str(user["email"]))
         return holder["ctx"]
 
     def session_secret() -> bytes:
@@ -241,9 +278,10 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
         return {"ok": True, "stt_model": "prisma-v3.0", "tts_model": "timbre-v3.0"}
 
     @app.get("/api/ledger", dependencies=guarded)
-    async def ledger_view(limit: int = 50, order: str = "created", customer_id: str | None = None):
+    async def ledger_view(request: Request, limit: int = 50, order: str = "created",
+                          customer_id: str | None = None):
         """Entries newest first: `order=created` (audit order, default) or `order=date` (effective date)."""
-        c = ctx()
+        c = ctx(request)
         today = c.pipeline.now().date()
         if order not in ("created", "date"):
             raise HTTPException(400, "order must be created or date")
@@ -252,36 +290,36 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
                            "payment_today": c.ledger.payment_total(today)}}
 
     @app.get("/api/metrics", dependencies=guarded)
-    async def metrics():
-        return ctx().ledger.metrics()
+    async def metrics(request: Request):
+        return ctx(request).ledger.metrics()
 
     @app.get("/api/customers", dependencies=guarded)
-    async def customers():
-        return {"customers": ctx().ledger.customer_summaries()}
+    async def customers(request: Request):
+        return {"customers": ctx(request).ledger.customer_summaries()}
 
-    def reminder_text(name: str, amount: int, lang: str) -> str:
-        return ctx().pipeline.replies.with_lang(lang).reminder_message(name, amount)
+    def reminder_text(c: AppContext):
+        return lambda name, amount, lang: c.pipeline.replies.with_lang(lang).reminder_message(name, amount)
 
     @app.get("/api/reminders", dependencies=guarded)
-    async def reminders():
+    async def reminders(request: Request):
         """Pending reminders, rebuilt from the current balance, with their wa.me links (opted-in customers only)."""
-        c = ctx()
+        c = ctx(request)
         now = c.pipeline.now()
         if in_quiet_hours(now):
             return {"reminders": [], "quiet_hours": True}
-        return {"reminders": c.ledger.outbox(now, reminder_text), "quiet_hours": False}
+        return {"reminders": c.ledger.outbox(now, reminder_text(c)), "quiet_hours": False}
 
     @app.post("/api/reminders/queue", dependencies=guarded)
-    async def queue_reminders():
-        c = ctx()
+    async def queue_reminders(request: Request):
+        c = ctx(request)
         now = c.pipeline.now()
         if in_quiet_hours(now):
             return {"queued": [], "quiet_hours": True}
         return {"queued": c.ledger.queue_reminders(now), "quiet_hours": False}
 
     @app.post("/api/customers/{customer_id}/reminders", dependencies=guarded)
-    async def set_opt_in(customer_id: str, body: dict):
-        c = ctx()
+    async def set_opt_in(request: Request, customer_id: str, body: dict):
+        c = ctx(request)
         lang = body.get("lang")
         if lang is not None and lang not in ("hi", "en"):
             raise HTTPException(400, "lang must be hi or en")
@@ -294,7 +332,7 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
         return {"ok": True}
 
     @app.post("/api/customers/{customer_id}", dependencies=guarded)
-    async def update_customer(customer_id: str, body: dict):
+    async def update_customer(request: Request, customer_id: str, body: dict):
         """Set the optional pronunciation `say` (spoken in place of the display name) or the reminder `lang`."""
         say = body.get("say")
         lang = body.get("lang")
@@ -302,7 +340,7 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
             raise HTTPException(400, "say must be a short string")
         if lang is not None and lang not in ("hi", "en"):
             raise HTTPException(400, "lang must be hi or en")
-        if not ctx().ledger.update_customer(customer_id, say=say, lang=lang):
+        if not ctx(request).ledger.update_customer(customer_id, say=say, lang=lang):
             raise HTTPException(404, "unknown customer")
         return {"ok": True}
 
@@ -314,6 +352,10 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
             raise HTTPException(401, "bad admin token")
         c = ctx()
         c.ledger.close()
+        with tenants_lock:
+            for t in tenants.values():
+                t.ledger.close()
+            tenants.clear()  # each account's khata reopens (empty) on its next request
         try:
             removed = purge_files(cfg)
         except OSError as exc:
@@ -332,7 +374,7 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
         if cfg.auth_enabled and signed_in(ws.cookies) is None:
             await ws.close(code=1008)  # not signed in with an allowed Google account
             return
-        await Session(ws, ctx()).run()
+        await Session(ws, ctx(ws)).run()
 
     @app.get("/", include_in_schema=False)
     async def index():
