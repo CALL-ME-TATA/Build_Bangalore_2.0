@@ -88,6 +88,17 @@ def test_send_posts_the_form_twilio_expects():
     assert fake.auth[0] == "Basic " + base64.b64encode(f"ACtest:{TOKEN}".encode()).decode()
 
 
+def test_a_trial_account_sends_its_predefined_template_instead_of_the_text():
+    fake = FakeTwilio()
+    sms = TwilioSms("ACtest", TOKEN, from_number="+15550001111", allowed_to=OWNER,
+                    trial_template=" sms_appointment_reminders ", transport=httpx.MockTransport(fake.handler))
+    sms.send(OWNER, "Namaste Ramesh ji, aapke khate mein ₹340 baaki hain.")
+    assert fake.sent == [{"To": OWNER, "From": "+15550001111", "Body": "sms_appointment_reminders"}]
+    s = Settings.from_env({"TWILIO_ACCOUNT_SID": "AC1", "TWILIO_AUTH_TOKEN": "t", "TWILIO_FROM": "+15550001111",
+                           "TWILIO_TRIAL_TEMPLATE": "sms_account_alerts"})
+    assert s.twilio_trial_template == "sms_account_alerts"
+
+
 def test_a_number_not_allowed_is_never_sent_to():
     fake = FakeTwilio()
     with pytest.raises(PermissionError):

@@ -47,10 +47,13 @@ def parse_allowed(value: str) -> frozenset[str] | None:
 
 class TwilioSms:
     def __init__(self, account_sid: str, auth_token: str, *, messaging_service_sid: str = "", from_number: str = "",
-                 allowed_to: str = "", transport: httpx.BaseTransport | None = None, api: str = API):
+                 allowed_to: str = "", trial_template: str = "", transport: httpx.BaseTransport | None = None,
+                 api: str = API):
         if not (messaging_service_sid or from_number):
             raise ValueError("a messaging service SID or a from number is needed")
         self.account_sid = account_sid
+        # A trial account refuses custom text (Twilio error 572006): it sends only predefined templates by name.
+        self.trial_template = trial_template.strip()
         self._auth = (account_sid, auth_token)
         self.messaging_service_sid = messaging_service_sid
         self.from_number = from_number
@@ -65,7 +68,7 @@ class TwilioSms:
         """Send one SMS; returns Twilio's message SID. Raises SmsError, or PermissionError for a number not allowed."""
         if not self.allowed(to):
             raise PermissionError("number not in TWILIO_ALLOWED_TO")
-        form = {"To": to, "Body": body}
+        form = {"To": to, "Body": self.trial_template or body}
         if self.messaging_service_sid:
             form["MessagingServiceSid"] = self.messaging_service_sid
         else:
@@ -92,4 +95,5 @@ def from_settings(cfg: Any, transport: httpx.BaseTransport | None = None) -> Twi
         return None
     return TwilioSms(cfg.twilio_account_sid, cfg.twilio_auth_token,
                      messaging_service_sid=cfg.twilio_messaging_service_sid, from_number=cfg.twilio_from,
-                     allowed_to=cfg.twilio_allowed_to, transport=transport)
+                     allowed_to=cfg.twilio_allowed_to, trial_template=getattr(cfg, "twilio_trial_template", ""),
+                     transport=transport)

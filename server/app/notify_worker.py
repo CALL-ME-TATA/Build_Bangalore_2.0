@@ -118,6 +118,8 @@ def main() -> int:
     else:
         allowed = "any number" if sms._allowed is None else f"{len(sms._allowed)} allowed number(s)"
         log.info("SMS reminders on through Twilio: %s", allowed)
+        if sms.trial_template:
+            log.info("Twilio trial: every SMS is the predefined template %r, not the reminder text", sms.trial_template)
     from kafka import KafkaConsumer
 
     consumer = KafkaConsumer(cfg.kafka_topic, bootstrap_servers=cfg.kafka_bootstrap, group_id="khata-notify",

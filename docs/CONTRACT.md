@@ -1208,6 +1208,9 @@ Kafka consumer). On when `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` and `TWILIO_M
 - Phone numbers, names, message text and the auth token never go into Kafka or the log.
 - `REMINDER_ANY_HOUR=1` lifts the 09:00 to 20:00 window (Q06) for queueing, listing and sending, in the server
   and in the consumer. Default off. Opt-in, the allow-list and one SMS per customer per 24 hours still apply.
+- A Twilio trial account refuses custom text (error 572006) and sends only predefined templates by name. With
+  `TWILIO_TRIAL_TEMPLATE` set (e.g. `sms_appointment_reminders`), that name is sent as the body instead of the
+  reminder text; every other check above still applies. Empty (a paid account): the reminder text itself.
 - SMS is the only channel (v1.11): there is no WhatsApp link. `GET /api/reminders` items carry `"has_phone"`
   (a number is stored) instead of `wa_link`, so the page never receives a customer's full number.
 
