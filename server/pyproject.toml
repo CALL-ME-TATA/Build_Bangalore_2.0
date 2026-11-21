@@ -7,6 +7,7 @@ dependencies = [
   "uvicorn[standard]",
   "websockets",
   "httpx",
+  "kafka-python==3.0.13",
   "rapidfuzz",
   "cryptography",
   "python-dotenv",

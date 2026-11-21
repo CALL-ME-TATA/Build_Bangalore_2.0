@@ -29,6 +29,7 @@ from .gnani.tts import TtsClient
 from .gnani.tts import _memory_cache as tts_memory_cache
 from .ledger import Ledger, in_quiet_hours
 from .llm import from_settings as from_llm_settings
+from .notify import from_settings as notifier_from_settings
 from .logsafe import NoDebug, StripQuery
 from .pipeline import ParseFn, Pipeline, default_parse, warm_default_parser
 from .replies import NumberToWords, Replier, fixed_replies
@@ -143,6 +144,7 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
         llm_parse = from_llm_settings(default_parse, cfg) if parse is None else None
         pipeline = Pipeline(ledger, cfg, parse=parse or llm_parse, number_to_words=number_to_words, now=now)
         shared["crypto"], shared["parse"] = crypto, parse or llm_parse
+        shared["notifier"] = pipeline.notifier = notifier_from_settings(cfg)
         if parse is None:
             warm_default_parser()  # the vocabulary loads lazily; load it before the first turn
         holder["ctx"] = AppContext(
@@ -163,6 +165,7 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
                 for t in tenants.values():
                     t.ledger.close()
                 tenants.clear()
+            shared["notifier"].close()
 
     app = FastAPI(title="KhataVaani", lifespan=lifespan)
 
@@ -183,6 +186,7 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
                 base = holder["ctx"]
                 led = Ledger(cfg.data_dir / "users" / tid / "khata.db", shared["crypto"])
                 pipe = Pipeline(led, cfg, parse=shared["parse"], number_to_words=number_to_words, now=now)
+                pipe.notifier, pipe.shop = shared["notifier"], tid
                 t = tenants[tid] = AppContext(settings=cfg, ledger=led, pipeline=pipe, stt_factory=base.stt_factory,
                                               tts_factory=base.tts_factory)
             return t
@@ -315,7 +319,10 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
         now = c.pipeline.now()
         if in_quiet_hours(now):
             return {"queued": [], "quiet_hours": True}
-        return {"queued": c.ledger.queue_reminders(now), "quiet_hours": False}
+        queued = c.ledger.queue_reminders(now)
+        for rid in queued:
+            c.pipeline.notify({"type": "reminder_queued", "reminder_id": rid})
+        return {"queued": queued, "quiet_hours": False}
 
     @app.post("/api/customers/{customer_id}/reminders", dependencies=guarded)
     async def set_opt_in(request: Request, customer_id: str, body: dict):

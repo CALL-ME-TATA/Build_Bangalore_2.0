@@ -21,6 +21,7 @@ from .config import Settings
 from .logsafe import describe
 from .ledger import PERIODS, DuplicateUtterance, Ledger, Outcome, in_quiet_hours, period_range
 from .names import display_name
+from .notify import Notifier
 from .replies import NumberToWords, Reply, Replier, default_number_to_words, fixed_replies
 
 log = logging.getLogger("khata.pipeline")
@@ -206,6 +207,15 @@ class Pipeline:
         self._now = now or (lambda: datetime.now(self._tz))
         self._fixed = {lang: {r.speak for r in fixed_replies(self.replies.with_lang(lang))} for lang in ("hi", "en")}
         self._noisy = False  # the turn in progress was a noisy spoken turn (3.5); reset by every `_run`
+        self.notifier: Notifier = Notifier()  # Kafka notifications (app/notify.py); set by the app
+        self.shop = "default"  # which khata this pipeline writes (a hash per signed-in account)
+
+    def notify(self, event: dict) -> None:
+        """Publish one notification after a committed write. Never raises."""
+        try:
+            self.notifier.publish({"shop": self.shop, "ts": self.now().isoformat(), **event})
+        except Exception as exc:
+            log.warning("notify failed: %s", type(exc).__name__)
 
     def now(self) -> datetime:
         """The server clock in SHOP_TZ: every ledger `ts` and the shop day come from it (C05, C06)."""
@@ -636,6 +646,10 @@ class Pipeline:
                           utterance_id=utterance_id, finish=finish, device_ts=device_ts)
         turn: TurnResult = holder["turn"]
         outcome: Outcome = holder["outcome"]
+        if not outcome.nothing:  # after the commit: one event per saved or reversed entry
+            for ev in outcome.saved or outcome.reversed:
+                self.notify({"type": f"entry_{outcome.action}", "entry_id": ev.get("id"),
+                             "customer_id": ev.get("customer_id"), "kind": ev.get("kind"), "amount": ev.get("amount")})
         state.clear_pending()
         if outcome.nothing:
             self._set_last_turn(state, "none", now)
@@ -714,5 +728,7 @@ class Pipeline:
             pending = {"reason": "confirm_entry", "action": "reminder", "customer": customer["key"],
                        "customer_id": cid, "amount": bal, "events": [], "confirm": confirm}
             return r.reminder_confirm(name, bal, said), pending, customer
-        led.queue_reminder(cid, now)
+        rid = led.queue_reminder(cid, now)
+        if rid is not None:
+            self.notify({"type": "reminder_queued", "reminder_id": rid, "customer_id": cid, "amount": bal})
         return r.reminder_ready(name), None, customer

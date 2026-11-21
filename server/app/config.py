@@ -62,6 +62,9 @@ class Settings:
     allowed_emails: str = ""
     session_secret: str = ""  # empty: a random key in data/session.key
     public_url: str = ""  # e.g. https://my-tunnel.trycloudflare.com when behind a tunnel; empty = the request's host
+    # Kafka notifications (app/notify.py). Empty = off.
+    kafka_bootstrap: str = ""
+    kafka_topic: str = "khata.notifications"
     host: str = "127.0.0.1"
     port: int = 8000
 
@@ -111,6 +114,8 @@ class Settings:
             allowed_emails=get("ALLOWED_EMAILS"),
             session_secret=get("SESSION_SECRET"),
             public_url=get("PUBLIC_URL").rstrip("/"),
+            kafka_bootstrap=get("KAFKA_BOOTSTRAP"),
+            kafka_topic=get("KAFKA_TOPIC", cls.kafka_topic),
             host=get("HOST", cls.host),
             port=int(get("PORT", str(cls.port))),
         )

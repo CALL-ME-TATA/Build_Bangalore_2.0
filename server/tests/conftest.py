@@ -9,5 +9,5 @@ from __future__ import annotations
 import os
 
 for _name in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "ALLOWED_EMAILS", "SESSION_SECRET", "PUBLIC_URL",
-              "LLM_API_KEY"):
+              "LLM_API_KEY", "KAFKA_BOOTSTRAP"):
     os.environ[_name] = ""
