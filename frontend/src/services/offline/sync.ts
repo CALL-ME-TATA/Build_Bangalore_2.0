@@ -15,24 +15,26 @@ import {
   nextToSend,
   outcomeOfError,
   outcomeOfResult,
+  questionOpenAt,
+  QUESTION_OPEN_MS,
   recoverQueue,
+  trackQuestion,
   sortQueue,
   type Outcome,
   type OutboxRecord,
 } from './queue';
 import { useOffline } from './status';
 import { newUttId } from '../../lib/ids';
-import { QUESTION_TTL_MS } from '../../lib/doubtSheet';
 
 let loaded: Promise<void> | null = null;
 let running = false;
 let inflight: { id: number; resultCount: number; timer: ReturnType<typeof setTimeout> } | null = null;
 /**
- * An outbox sentence got a question back: hold the rest until the question is answered or dropped (a later
- * result that is not a question, or the server's 60 s expiry), so a later sentence is never taken as the answer.
+ * When the open question was asked, whoever raised it (a live spoken or typed turn, or a queued sentence); null
+ * when none is open. While it is open nothing leaves the queue (contract 3.4).
  */
-let heldByQuestion = false;
-let heldSince = 0;
+let openSince: number | null = null;
+let expiryTimer: ReturnType<typeof setTimeout> | undefined;
 
 const items = () => useOffline.getState().outbox;
 
@@ -62,17 +64,6 @@ function ensureLoaded(): Promise<void> {
   return loaded;
 }
 
-/**
- * Whether the question an outbox sentence raised is still open on the server: it is asked again after a
- * silence or a failure, and an accidental press (too_short, cancelled) or a replayed duplicate leaves it open.
- */
-function questionStillOpen(s: SessionStore): boolean {
-  const r = s.result;
-  if (!r) return true; // a new turn has started and has no result yet
-  if (r.status === 'needs_clarification' || r.duplicate) return true;
-  return r.action === 'none' && (r.reason === 'too_short' || r.reason === 'cancelled');
-}
-
 function gateOf(s: SessionStore) {
   return {
     started: s.started,
@@ -82,14 +73,13 @@ function gateOf(s: SessionStore) {
     phase: s.phase,
     audioTurn: s.audioTurn,
     micOpen: useMicGesture.getState().open,
-    questionOpen: heldByQuestion && questionStillOpen(s) && Date.now() - heldSince < QUESTION_TTL_MS,
+    questionOpen: questionOpenAt(openSince, Date.now()),
   };
 }
 
 function tick(): void {
   if (!running || inflight) return;
   const s = useSession.getState();
-  if (heldByQuestion && !questionStillOpen(s)) heldByQuestion = false;
   let next = nextToSend(items());
   if (!next || !canSend(gateOf(s))) return;
   if (!next.uttId) {
@@ -114,11 +104,6 @@ function settle(outcome: Outcome): void {
   inflight = null;
   const L = offlineLabels(useSession.getState().lang);
   if (outcome.kind === 'delivered') {
-    heldByQuestion = outcome.question;
-    if (outcome.question) {
-      heldSince = Date.now();
-      setTimeout(tick, QUESTION_TTL_MS + 500); // the server drops the question then; carry on
-    }
     announce(L.sentFromOutbox);
   } else if (outcome.kind === 'failed') {
     announce(L.failedFromOutbox);
@@ -127,12 +112,24 @@ function settle(outcome: Outcome): void {
   setTimeout(tick, 400); // let the reply's state messages arrive before judging the gate again
 }
 
+/** Follows the open question from every result, before the queue is judged. */
+function watchQuestion(s: SessionStore, prev: SessionStore): void {
+  if (s.resultCount === prev.resultCount || !s.result) return;
+  openSince = trackQuestion(openSince, s.result, Date.now());
+  clearTimeout(expiryTimer);
+  if (openSince != null) expiryTimer = setTimeout(tick, QUESTION_OPEN_MS + 500); // expired: carry on
+}
+
 function onSession(s: SessionStore, prev: SessionStore): void {
+  watchQuestion(s, prev);
   if (!inflight) {
     tick();
     return;
   }
-  if (s.resultCount > inflight.resultCount && s.result) settle(outcomeOfResult(s.result));
+  if (s.resultCount > inflight.resultCount && s.result) {
+    const rec = items().find((i) => i.id === inflight?.id);
+    settle(outcomeOfResult(s.result, rec, newUttId));
+  }
   else if (s.error && s.error !== prev.error) settle(outcomeOfError(s.errorCode, s.error));
   else if (s.conn !== 'open' && prev.conn === 'open') settle({ kind: 'retry', reason: 'no_connection' });
 }

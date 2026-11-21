@@ -43,8 +43,13 @@ HOPS = ["stt_final", "parse", "db", "tts_first_chunk", "end_to_first_audio", "gn
 
 
 def pcm_audio(ms: int = 600) -> bytes:
+    """Audio as the page sends it: 8 frames of near-silence (pre-roll), the tone as speech, 9 frames of near-silence."""
     n = 16000 * ms // 1000
-    return struct.pack(f"<{n}h", *[2000 if (i // 40) % 2 else -2000 for i in range(n)])
+    tone = [2000 if (i // 40) % 2 else -2000 for i in range(n)]
+    quiet = [20 if (i // 7) % 2 else -20 for i in range(512 * 8)]
+    tail = [20 if (i // 7) % 2 else -20 for i in range(512 * 9)]
+    samples = quiet + tone + tail
+    return struct.pack(f"<{len(samples)}h", *samples)
 
 
 def percentile(values: list[float], pct: float) -> float:

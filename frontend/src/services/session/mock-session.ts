@@ -10,7 +10,7 @@
 // turn; "awaaz band" in a typed sentence makes the reply arrive without audio (a text-to-speech error), and
 // "network" makes it the upstream-failure reply, so the beep and the type box can be tried.
 import type { Lang } from '../../i18n';
-import { MockBrain, VOICE_SCRIPT, scriptedAnswer, type BrainResult } from '../mock/brain';
+import { MockBrain, VOICE_SCRIPT, scriptedAnswer, soundsNoisy, type BrainResult } from '../mock/brain';
 import { mockLedger, type MockLedger } from '../mock/ledger';
 import type { MicStatus, ResultMessage, SessionHost, SessionService } from './types';
 import { softBeep } from './audio/player';
@@ -41,6 +41,16 @@ export function createMockSession(host: SessionHost, options: MockSessionOptions
   let speakTimer: ReturnType<typeof setInterval> | undefined;
   /** Results by utt_id, for duplicate detection. */
   const seen = new Map<string, BrainResult>();
+  /** When the open question was asked (the server drops it after 60 s). */
+  let askedAt = 0;
+
+  /** Answers `text`, dropping a question older than 60 s first, as the server does. */
+  function respond(text: string): BrainResult {
+    if (brain.pendingReason && Date.now() - askedAt >= 60_000) brain.dropPending();
+    const r = brain.respond(text);
+    if (r.status === 'needs_clarification') askedAt = Date.now();
+    return r;
+  }
   let beepCtx: AudioContext | null = null;
 
   /** A speech-like level while the reply "plays" (word bursts and pauses), for the wave bar. */
@@ -94,7 +104,7 @@ export function createMockSession(host: SessionHost, options: MockSessionOptions
   }
 
   /** Result, then the spoken reply, then timing, from `t0` ms after the end of input. */
-  function deliver(id: number, r: BrainResult, t0: number, opts: { duplicate?: boolean; noAudio?: boolean } = {}) {
+  function deliver(id: number, r: BrainResult, t0: number, opts: { duplicate?: boolean; noAudio?: boolean; noise?: { separation_db: number; noisy: boolean; turned_down_ms: number } } = {}) {
     const { speak: spoken, ...fields } = r;
     const msg: ResultMessage = { type: 'result', turn_id: id, trace_id: `mock-${id}`, ...fields };
     if (opts.duplicate) msg.duplicate = true;
@@ -128,6 +138,8 @@ export function createMockSession(host: SessionHost, options: MockSessionOptions
         turn_id: id,
         trace_id: `mock-${id}`,
         ms: { stt_final: t0, parse: 2, db: 4, tts_first_chunk: firstAudio - t0 - 60, end_to_first_audio: firstAudio + 10, gnani_stt_latency: jitter(180, 40) },
+        // Spoken turns only (contract 3.5); typed turns have no noise measurement.
+        ...(opts.noise ? { noise: opts.noise } : {}),
       }),
     );
     const duration = Math.max(1400, r.reply_text.length * 62) / speed;
@@ -206,7 +218,14 @@ export function createMockSession(host: SessionHost, options: MockSessionOptions
       const id = turn;
       later(120, () => dispatch({ type: 'state', turn_id: id, state: 'transcribing' }));
       later(jitter(300, 60), () => dispatch({ type: 'transcript', turn_id: id, text: heard, segment: 1, final: true }));
-      deliver(id, brain.respond(heard), jitter(380, 60));
+      // A quiet counter by default; the scripted "…, Mohan ka?" turn has a second voice and counts as noisy.
+      const noisy = soundsNoisy(heard);
+      brain.noisy = noisy;
+      const r = respond(heard);
+      brain.noisy = false;
+      deliver(id, r, jitter(380, 60), {
+        noise: noisy ? { separation_db: 8.4, noisy: true, turned_down_ms: 1120 } : { separation_db: 23.5, noisy: false, turned_down_ms: 420 },
+      });
     },
 
     sendText(text, opts = {}) {
@@ -218,6 +237,18 @@ export function createMockSession(host: SessionHost, options: MockSessionOptions
       dispatch({ type: 'local_end', t: performance.now() });
       const id = ++turn;
       const first = opts.uttId ? seen.get(opts.uttId) : undefined;
+      if (first && first.status === 'needs_clarification' && brain.pendingReason !== first.reason) {
+        // A replay whose question is no longer the open one: the server will not put it back (contract 3.4).
+        deliver(id, {
+          status: 'rejected',
+          action: 'none',
+          reason: 'cancelled',
+          entries: [],
+          lang,
+          reply_text: lang === 'en' ? 'Okay, nothing was saved.' : 'Theek hai, entry nahi ki.',
+        }, 40);
+        return;
+      }
       if (first) {
         deliver(id, first, 40, { duplicate: true }); // nothing new is saved
         return;
@@ -234,7 +265,7 @@ export function createMockSession(host: SessionHost, options: MockSessionOptions
         }, 40);
         return;
       }
-      const r = brain.respond(tx.replace(/awaaz band/i, '').trim());
+      const r = respond(tx.replace(/awaaz band/i, '').trim());
       if (opts.uttId) seen.set(opts.uttId, r);
       deliver(id, r, 40, { noAudio: /awaaz band/i.test(low) });
     },

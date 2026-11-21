@@ -89,11 +89,12 @@ def test_B1_a_name_nobody_offered_changes_the_customer_so_the_entries_are_review
 @pytest.mark.parametrize("utterance", ["Mohan ka 340 udhaar, kal 200 diya tha",
                                        "Vikram ka 340 udhaar, kal 200 diya tha"])
 def test_B1_flagship_sentence_with_an_unknown_name_asks_once_then_saves_both(utterance):
+    # "naya" answers the plain and the either-or form of the new-customer question (1.18)
     name = utterance.split()[0].lower()
     c = ctx([c for c in ROSTER if c["name"] != name])
     first = run(utterance, c)
     assert first["reason"] == "new_customer" and first["pending"]["index"] == 0
-    done = answer(first, "haan", c)
+    done = answer(first, "naya", c)
     assert saved(done) and done["action"] == "append", done
     assert entries(done) == [("credit", name, 340), ("payment", name, 200)]
     assert [e["date"] for e in done["events"]] == [D0, D1]
@@ -107,14 +108,14 @@ def test_B1_one_unknown_name_in_two_spellings_is_asked_once_under_one_key(uttera
     c = ctx([c for c in ROSTER if c["name"] != "mohan"])
     first = run(utterance, c)
     assert first["reason"] == "new_customer"
-    done = answer(first, "haan", c)
+    done = answer(first, "naya", c)
     assert saved(done), done
     assert entries(done) == [("credit", key, 340), ("payment", key, 200)]
 
 
 def test_B1_the_same_unknown_name_in_three_events_is_asked_once():
     c = ctx([c for c in ROSTER if c["name"] != "mohan"])
-    done = answer(run("Mohan ka 100 udhaar, Mohan ne 50 diye, Mohan ka 20 udhaar", c), "haan", c)
+    done = answer(run("Mohan ka 100 udhaar, Mohan ne 50 diye, Mohan ka 20 udhaar", c), "naya", c)
     assert entries(done) == [("credit", "mohan", 100), ("payment", "mohan", 50), ("credit", "mohan", 20)]
 
 
@@ -122,10 +123,10 @@ def test_B1_two_different_unknown_names_get_a_question_each():
     first = run("Mohan ka 100 udhaar aur Sohan ne 50 diye", ctx([c for c in ROSTER if c["name"] != "mohan"]))
     c = ctx([c for c in ROSTER if c["name"] != "mohan"])
     assert first["question"].startswith("Mohan")
-    second = answer(first, "haan", c)
+    second = answer(first, "naya", c)
     assert second["reason"] == "new_customer" and second["pending"]["index"] == 1
     assert second["question"].startswith("Sohan")
-    done = answer(second, "haan", c)
+    done = answer(second, "naya", c)
     assert entries(done) == [("credit", "mohan", 100), ("payment", "sohan", 50)]
 
 
@@ -145,7 +146,7 @@ def test_B1_unknown_name_and_a_missing_direction_end_with_the_review():
 def test_B1_the_question_carries_the_index_of_its_event(utterance, index):
     r = run(utterance)
     assert r["reason"] == "new_customer" and r["pending"]["index"] == index
-    done = answer(r, "haan")
+    done = answer(r, "naya")  # 1.18: a question that offers a close customer takes "naya", not a bare yes
     assert saved(done) and len(done["events"]) == 2, done
 
 
@@ -331,8 +332,8 @@ def test_B7_bill_paid_rest_is_one_credit(utterance, amounts):
     assert [e["amount"] for e in r["pending"]["events"]] == [amounts[2]]
 
 
-@pytest.mark.parametrize("utterance", ["Ramesh ne 500 ka saaman liya aur payment kar diya",
-                                       "Ramesh ko 500 udhaar diya tha wo aa gaya",
+# "Ramesh ne 500 ka saaman liya aur payment kar diya" is a cash sale since 1.18 (test_review5_rules B1).
+@pytest.mark.parametrize("utterance", ["Ramesh ko 500 udhaar diya tha wo aa gaya",
                                        "Ramesh ko 500 udhaar diya, cash diya",
                                        "Ramesh took 500 on credit and paid", "Ramesh ko 500 udhaar diya, usne de diye"])
 def test_B7_credit_with_an_amount_less_payment_cue_asks(utterance):

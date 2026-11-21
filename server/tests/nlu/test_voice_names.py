@@ -33,7 +33,9 @@ def test_repeated_name_in_two_spellings_is_the_stored_customer(utterance):
 
 def test_real_two_word_name_is_not_collapsed():
     r = run("Ramesh Chopra ka 50 udhaar")
-    assert customer_of(r) == ("ramesh chopra", None) and r["events"][0]["new_customer"] is True
+    # 1.18: never collapsed into Ramesh; the stored Ramesh is offered in the new-customer question
+    assert r["reason"] == "new_customer" and r["pending"]["events"][0]["customer"] == "ramesh chopra"
+    assert [c["name"] for c in r["candidates"]][:1] == ["ramesh"]
 
 
 def test_two_different_stored_customers_are_not_collapsed():

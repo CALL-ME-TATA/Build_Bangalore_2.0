@@ -41,7 +41,7 @@ def test_english_templates():
     assert EN.nothing_to_undo().text == "There is nothing to undo."
     assert EN.nothing_to_amend().text == "There is no earlier entry."
     assert EN.confusable(340, 740).text == "₹340 or ₹740?"
-    assert EN.same_name("Ramesh", ["chai wale", ""]).text == "Which Ramesh: chai wale or the first one?"
+    assert EN.same_name("Ramesh", ["chai wale", ""]).text == "Which Ramesh: chai wale or the one with no tag?"
     assert EN.missing_amount().text == "How many rupees?" and EN.missing_customer().text == "Whose account?"
     assert EN.direction("Ramesh").text == "Did Ramesh pay, or did Ramesh take credit?"
     assert EN.plausibility(60000).text == "₹60,000, are you sure?"
@@ -109,7 +109,7 @@ def test_clarification_dispatch_new_questions_both_languages():
     replace = {"reason": "unclear_correction", "pending": {"action": "amend", "events": [
         {"kind": "payment", "customer": "sunita", "amount": 100}]}}
     last = {"kind": "credit", "customer": "ramesh", "amount": 340}
-    assert EN.clarification(replace, last=last).text == "Replace the last entry with this one?"
+    assert EN.clarification(replace, last=last).text == "Replace the last entry with ₹100 payment for Sunita?"
     # Only a whole new entry (customer, amount and kind all different) gets the replace wording (1.16).
     assert EN.clarification(replace).text == "Say the right amount, or say remove it."
     same_amount = dict(last, amount=100)

@@ -83,7 +83,25 @@ EXTRA_SECTIONS = [("X", "Sentences nobody listed", [
     ("Z22", "reduction with its own amount"), ("Z23", "one amount, two names"),
     ("Z24", "stray word heard as a name"), ("Z25", "silent, empty, long turns and expiry in a chain"),
     ("Z26", "private mode in a chain"), ("Z27", "wording with several entries pending"),
-    ("Z28", "single-entry regression guard")])]
+    ("Z28", "single-entry regression guard"),
+    ("Z29", "cash purchase saves nothing"),
+    ("Z30", "past credit that came back"),
+    ("Z31", "udhaar given by the customer"),
+    ("Z32", "purchase, paid and the rest"),
+    ("Z33", "account words are not a direction"),
+    ("Z34", "stray words are not customers"),
+    ("Z35", "yes with an address word"),
+    ("Z36", "stored name plus an unknown word"),
+    ("Z37", "restated corrections"),
+    ("Z38", "not that entry"),
+    ("Z39", "dates and sath sau"),
+    ("Z40", "guards"),
+    ("Z41", "answers"),
+    ("Z42", "same name, three customers"),
+    ("Z43", "payment plus baaki chhod do"),
+    ("Z44", "English"),
+    ("Z45", "switch off, strict on"),
+    ("Z46", "typed sentence while a question is open")])]
 
 
 def parse_cases_doc() -> list[tuple[str, str, list[tuple[str, str]]]]:

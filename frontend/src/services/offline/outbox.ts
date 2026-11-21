@@ -6,7 +6,7 @@ import { deviceKey } from './keys';
 import type { OutboxRecord } from './queue';
 import { newUttId } from '../../lib/ids';
 
-type Payload = Pick<OutboxRecord, 'text' | 'state' | 'reason' | 'attempts' | 'uttId'>;
+type Payload = Pick<OutboxRecord, 'text' | 'state' | 'reason' | 'attempts' | 'uttId' | 'renewed'>;
 
 const aad = (createdAt: string) => `outbox:${createdAt}`;
 
@@ -36,7 +36,7 @@ export async function addOutbox(text: string, createdAt = new Date().toISOString
 
 export async function writeOutbox(rec: OutboxRecord): Promise<void> {
   const [db, key] = await Promise.all([openDb(), deviceKey()]);
-  const payload: Payload = { text: rec.text, state: rec.state, reason: rec.reason, attempts: rec.attempts, uttId: rec.uttId };
+  const payload: Payload = { text: rec.text, state: rec.state, reason: rec.reason, attempts: rec.attempts, uttId: rec.uttId, renewed: rec.renewed };
   const sealed = await encryptJson(key, payload, aad(rec.createdAt));
   await db.outbox.put({ id: rec.id, blob: sealed.blob, iv: sealed.iv, createdAt: rec.createdAt });
 }

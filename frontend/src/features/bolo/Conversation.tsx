@@ -16,7 +16,7 @@ import { Link } from '@tanstack/react-router';
 import { useKhataView } from '../khata/view';
 import { OutboxList } from '../../services/offline/OfflineNotes';
 import { LatencyLine } from './LatencyLine';
-import { conversation, lastLatency, latestEntry, newestActiveId, sendUndo, useSession, type TurnRecord } from '../../state/session';
+import { conversation, lastLatency, latestEntry, newestActiveId, sendUndo, turnNoise, useSession, type TurnRecord } from '../../state/session';
 import type { BalanceInfo, Entry } from '../../services/session/types';
 
 function prefersReducedMotion(): boolean {
@@ -92,7 +92,7 @@ export function Conversation() {
 
       {showLiveBox ? <LiveBox text={liveText} label={L.live} lang={lang} /> : null}
 
-      {latency ? <LatencyLine server={latency.server} phone={latency.phone} ms={latency.ms} lang={lang} /> : null}
+      {latency ? <LatencyLine server={latency.server} phone={latency.phone} ms={latency.ms} noise={latency.noise} lang={lang} /> : null}
       <OutboxList />
       <div ref={endRef} />
     </section>
@@ -181,6 +181,7 @@ function Turn({ turn, hideSaid, disclosure, live, uiLang, newestId, entryState }
             <span className={r.status === 'needs_clarification' ? 'text-ask' : undefined}>
               <span className="sr-only">{T.aiSpeaker}: </span>
               <Reply text={r.replyText} />
+              {turnNoise(turn)?.noisy ? <NoisyLabel lang={turn.lang} /> : null}
             </span>
           </p>
         )
@@ -188,6 +189,18 @@ function Turn({ turn, hideSaid, disclosure, live, uiLang, newestId, entryState }
 
       {r?.query?.type === 'top_dues' ? <SeeAllDues lang={turn.lang} /> : null}
     </>
+  );
+}
+
+/**
+ * "Shor zyada hai" beside the reply of a noisy turn (contract 3.5): information, not an error. It explains why
+ * the app asks "… likhun?" before saving. Same weight as the other small status labels; no red, no warning icon.
+ */
+export function NoisyLabel({ lang }: { lang: Lang }) {
+  return (
+    <span data-testid="noisy" className="ms-2 inline-block rounded-full border border-line px-2 align-middle text-meta whitespace-nowrap text-ink-2">
+      {labels(lang).noisyHere}
+    </span>
   );
 }
 

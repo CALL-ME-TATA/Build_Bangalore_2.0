@@ -65,8 +65,9 @@ function namesAfterColon(question: string): string[] {
   if (i < 0) return [];
   const tail = question.slice(i + 1).replace(/[?.!।]+\s*$/u, '').trim();
   if (!tail) return [];
+  // "chai wale, gali 3 ya bina tag wale" -> three names.
   return tail
-    .split(/\s+(?:ya|or)\s+/i)
+    .split(/\s*,\s*|\s+(?:ya|or)\s+/i)
     .map((s) => s.trim())
     .filter(Boolean);
 }
@@ -89,9 +90,11 @@ function yesNo(lang: Lang): DoubtSpec {
 const ORDINAL = ['pehla', 'doosra', 'teesra'];
 const ORDINAL_F = ['pehli', 'doosri', 'teesri'];
 
-function customerOptions(list: CandidateCustomer[], ordinalOnly: boolean): DoubtOption[] {
+function customerOptions(list: CandidateCustomer[], ordinalOnly: boolean, noTagLabel?: string): DoubtOption[] {
   return list.slice(0, 3).map((c, i) => {
     const tag = c.tags?.[0];
+    // Three customers (contract 3.4): pehla / doosra / teesra, and a tagless one is labelled "bina tag wale".
+    if (list.length >= 3) return { id: `cust-${c.id}`, label: c.display, sub: tag ? capFirst(tag) : noTagLabel, answer: ORDINAL[i] ?? c.display };
     // same_name: a tag identifies the customer; without one, the ordinal does. new_customer: always the ordinal
     // (the parser maps "pehla" / "doosra" to the candidates in order).
     const answer = ordinalOnly ? (ORDINAL[i] ?? c.display) : (tag ?? ORDINAL[i] ?? c.display);
@@ -127,10 +130,15 @@ export function doubtSpec({ reason, question, candidates, confirm, lang }: Doubt
 
   if (reason === 'same_name') {
     const custs = cands.filter(isCustomer);
-    if (custs.length >= 2) return { kind: 'choice', typeBox: false, options: customerOptions(custs, false) };
+    if (custs.length >= 2) return { kind: 'choice', typeBox: false, options: customerOptions(custs, false, L.noTag) };
     const names = namesAfterColon(q);
     if (names.length < 2) return none;
-    return { kind: 'choice', typeBox: false, options: names.slice(0, 3).map((n, i) => ({ id: `name-${i}`, label: capFirst(n), answer: n })) };
+    // Two names keep sending the name itself; three send the ordinals, as with candidates.
+    return {
+      kind: 'choice',
+      typeBox: false,
+      options: names.slice(0, 3).map((n, i) => ({ id: `name-${i}`, label: capFirst(n), answer: names.length >= 3 ? (ORDINAL[i] ?? n) : n })),
+    };
   }
 
   if (reason === 'new_customer') {

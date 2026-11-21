@@ -1,4 +1,4 @@
-# CONTRACT v1.5 (2026-11-21)
+# CONTRACT v1.7 (2026-11-21)
 
 The binding interface specification for KhataVaani. Changes go through the tech lead.
 Where this file disagrees with an older note, this file wins.
@@ -680,6 +680,131 @@ What was said is kept
 - `Ramesh ka 100 udhaar aur Sunita ko udhaar` (two direction words, one amount) stays `missing_amount` with
   `index: 1`, and `Ramesh ne 500 diye Sunita bhi` stays `missing_amount` (1.4, 1.15).
 
+### 1.18 Rules from the fourth review (v1.6; they override anything above that disagrees)
+
+Purchases, cash on the spot and repayments
+- A purchase with one amount and a word that says the money was handed over is a cash sale: rejected
+  `out_of_scope`, never a credit. Purchase words: `N ka saaman / maal liya`, `le gaya`, `saaman diya`, `bought`,
+  `purchased`. Handed-over words, in the same clause or a later one with no amount of its own: `paise de diye`,
+  `usne de diye`, `de gaya`, `payment ho gaya / de diya / kar diya`, `cash / nakad / UPI / Paytm / PhonePe / online`
+  with or without a verb (`cash mein liya`, `nakad liya`), `paise le liye`, `hisaab barabar`, `in cash`, `and paid`.
+  `Ramesh ne 200 ka saaman liya paise de diye` and `Ramesh bought goods for 200 in cash` save nothing.
+- A credit said in the past with a word that says it came back (`N udhaar diye the, aaj de gaya`,
+  `N udhaar diya tha wo aa gaya`) → `ambiguous_direction` (1.16), never the credit alone.
+- `udhaar` together with a verb of the customer giving and no `ko` (`X udhaar ke N de gaya`, `X N udhaar de gaya`,
+  `X udhaar N de gaya`, `udhaar ke N X de gaya`) → `ambiguous_direction`. `X ko N udhaar de diya` stays a credit.
+- A purchase amount, a paid amount and a word for the rest (`N ka saaman liya M diye baaki udhaar`,
+  `... baaki likh do`, `N ka saaman le gaya M de gaya baaki udhaar`) → `confirm_entry` `computed`: one credit of
+  N - M, as H01 does with the word `bill`. `N ka saaman liya M baaki hai` → `confirm_entry` `computed`: one credit
+  of M.
+- `computed` needs those words: an amount with a bill or purchase word, an amount with a paying word, and a word
+  for the rest or the credit. Any other three amounts stay three amounts and are asked about
+  (`500 ka note diya, 200 kaate, 300 wapas kiye`; `300 udhaar, 100 chawal ka aur 200 aate ka`).
+- A payment and "drop the rest" for the same customer (`X ne N diye baaki chhod do`, `... aur baaki maaf kar do`):
+  with a balance B above N → two events, payment N and writeoff B - N, behind `confirm_entry` `review`. With no
+  balance in `ctx`, or B not above N → the payment and a writeoff with no amount (`missing_amount`, its index).
+  `baaki M chhod do` gives the writeoff its own amount M. The paid amount is never the write-off amount.
+
+Words that name the account are not a direction
+- `X ke naam`, `X ke naam pe / se / ka` and `X ke khate mein` name the account. They mean a credit only when the
+  clause has no direction word. A payment word in the clause wins (`jama`, `payment`, `aaye`, `aaya`, `mile`,
+  `mila`, `kaat do`, `received`): `Ramesh ke naam 200 jama karo`, `Ramesh ke khate mein 200 payment likh do` →
+  payment. A credit word and a payment word together → `ambiguous_direction`.
+
+A stray word is not a customer
+- A new customer name stands only directly before a name particle, in English as the subject directly before the
+  verb or after `to` / `from` / `for`, or as the first word or words of a clause directly before the amount.
+  Anywhere else an unknown word is an unknown word: in strict mode the entry gets the `unsure` confirmation, and
+  the word never becomes a customer (`200 udhaar rakha`, `100 kam karo`, `paid 200 out of 500`, `300 by UPI`,
+  `he took another 100`, `300 chutte wapas diye`).
+- When the name words start with a stored customer's name and go on with a word that is not part of a stored name
+  or tag (`Ramesh Chopra ko 200 udhaar`, `Ramesh wants 200 on credit`), the new-customer question offers the stored
+  customer (`Ramesh Chopra naya grahak hai, ya Ramesh?`).
+- Common English adverbs and auxiliaries are fillers (`also`, `finally`, `already`, `just`, `again`, `has`, `have`,
+  `had`), and `given`, `purchased`, `cleared`, `collected` are verbs: `Ramesh also paid 200` and
+  `Ramesh has given 200` are payments by Ramesh.
+- A close name (1.14, E09) and the stored-name case above always ask, whatever `limits.confirm_new_customer` says.
+  With that switch off and strict mode on, a name that is not in the roster is accepted without a question only
+  directly before a particle with every other word known.
+- Never a name: English pronouns and function words (`I`, `me`, `my`, `he`, `she`, `his`, `her`, `they`, `it`,
+  `another`, `out`, `by`, `in`, `of`, `open`, `create`, `go ahead`), `ise`, `isse`, `inhe`, `unhe`, `use`, `sabko`,
+  `sab`, `kisi`, `koi`, `jo`. English `he` / `she` / `they` / `his` / `her` carry over like the Hindi pronouns
+  (`he paid 200` after an entry for Ramesh).
+- An adverb before `se` is a filler and the word is never a name: `jaldi se`, `yaad se`, `dhyan se`, `aaram se`,
+  `galti se`.
+- A goods word (the `goods_words` list: `chawal`, `aata`, `doodh`, `ande` ...) is never a customer name, also
+  directly before a particle (`100 chawal ka aur 200 aate ka`).
+- `his` / `her` / `uski` / `uska` followed by a relation word (`his wife paid 200`) is never a new customer: with
+  a carried customer it is that customer's relation (1.13), otherwise `missing_customer`.
+- A close name (1.14, E09) differs from the stored name in one consonant and in nothing else: after the 1.12
+  folding the vowels are the same in the same places, or the two differ only by a final vowel (`Jamesh` and
+  `Ramesh`, `Rakes` and `Rakesh`, `Kamala` and `Kamal` are close; `Mohan` and `Imran` are not).
+
+Answers
+- Yes with an address word or a filler is yes: `haan bhai`, `haan bhaiya`, `haan sir`, `haan madam`, `haan beta`,
+  `theek hai bhai`, `hau`, `yeah open it`, `go ahead`, `create`, `khol do`. In an answer to the new-customer
+  question only a stored name, the offered name or a name directly before a particle is another name.
+- A new-customer question that offers a close customer is an either-or question. `naya` / `banao` / `new` opens
+  the new account; the offered name, `wahi`, `purana` or `pehla` picks the stored customer. A bare yes is not an
+  answer: a failed attempt, asked again.
+- A date word beside a direction answer is kept (`kal udhaar`, `udhaar kal ka` → the credit, dated yesterday). An
+  answer to an open question is read as a query only when it is a complete query.
+- In a which-entry question the customer's name picks the entry (`Mohan`, `Mohan wali`).
+- `aur` with an amount after an entry (`uska 5 rupaye aur likh do`) is a new entry for that customer, never an
+  amend.
+- To `Pichli entry hata kar ... likhoon?` a no cancels: nothing is saved and the old entry stays. The question
+  names the new entry (5.1).
+- An utterance that is refused when it is parsed on its own (`negated`, `future`, `out_of_scope`, `too_large`,
+  `invalid_number`) is never an answer to an open question, whatever number or name it holds. The refusal is the
+  result and nothing is saved: with `₹75,000, pakka?` open, `Ramesh ka 200 udhaar nahi hai` saves nothing, and
+  with `₹340 ya ₹400?` open, `Ramesh ne 200 ka saaman liya paise de diye` saves nothing. The question stays open,
+  except that a `negated` utterance cancels an open yes-or-no question.
+- With `limits.noisy` (3.5) a correction that would be applied is confirmed with the `amend` confirmation (old and
+  new amount), not with the entry wording.
+- Same-name answers: ordinals follow the order the question was spoken in (the order of `candidates`), for two
+  customers as for three: `pehla`, `pehle wale` and `pehla wala` are the first one spoken, whatever its tag.
+  The customer with no tag is spoken and answered as `bina tag wale`. `teesra` is accepted when three were
+  offered, and an answer that fits none of the offered customers is a failed attempt. After the answer the
+  instruction that raised the question goes on (`Suresh ne poora de diya` → which Suresh → the settle confirmation).
+
+Corrections said as a restatement
+- Right after an entry these correct it and are never a second entry: `X ka N likhna tha` and `X ka N udhaar tha`
+  for the same customer and kind, and with no name `N kar do`, `N karo`, `N kar dijiye`, `amount N karo`,
+  `sorry N`, `actually N`, `it was N`, `I meant N` → `confirm_entry` `amend`. They never ask `Kiska khata?`.
+
+Not that entry
+- `X ka udhaar N ho gaya` states a balance → the balance query. `X ka N udhaar batao` → the balance query.
+- `X se N vasool karne hain`, `N lene hain`, `N lena hai` → rejected `future`.
+- A negation after the verb (`likhna mat`, `mat likhna`, `na likhna`) → rejected `negated`.
+- A question clause or a stative past clause inside a longer utterance (`... diye the kya aur ...`,
+  `... udhaar likha tha`) → `confirm_entry` `hearsay` for the whole utterance.
+- Given and taken back (`200 diye the wo wapas le gaya`) → `ambiguous_direction`.
+- `kal` with an instruction for later and no past verb (`likh dena kal`) → `unclear_date`.
+
+Dates and numbers
+- `last night`, `kal raat`, `yesterday evening` → yesterday. `this morning`, `aaj subah` → today. Any other
+  `last ...` phrase → `unclear_date`.
+- A date word before the first name applies to every clause that has no date word of its own
+  (`kal Ramesh ne 200 diye the aur Mohan ne bhi 100 diye the` → both yesterday).
+- A number up to 31 directly before `ko` and beside an amount is a day of the month → `unclear_date`
+  (`Ramesh ne 15 ko 200 diye`).
+- `sath sau` / `saath sau` → `confusable_number` with 700 and 6,000.
+
+Guards
+- Over-payment adds up the payments of one customer in the utterance before it compares with the balance
+  (`Mohan ne 100 diye aur 100 diye` with 140 due asks).
+- A reduction with an amount above the balance → `confirm_entry` `writeoff` with `confirm.balance`, and the
+  question states the balance (5.1). For a customer who owes nothing → the balance query.
+- The duplicate question is asked every time the same entry is repeated inside the window, also the third time,
+  and for an event of a longer utterance that repeats the last saved entry.
+
+English
+- An utterance whose words, apart from names and numbers, are English carries `lang: "en"`
+  (`Ramesh bought items worth 250 on credit`, `Ramesh paid 200 this morning`).
+- `paid in full`, `paid everything`, `paid the full amount`, `cleared everything` → settle (H04);
+  `write off X's balance` → write-off (H06). `X paid N not M` with no earlier entry → `confirm_entry` `hearsay`
+  for N.
+
 ## 2. Ledger (`server/app/ledger.py`), SQLite with field-level AES-256-GCM
 
 SQLCipher cannot load on the dev machine, so encryption is applied in the application with `cryptography` (AESGCM).
@@ -897,6 +1022,53 @@ Rules
 - `GET /api/metrics`: turns, saves, questions, rejections, corrections (amends), undos and the confusion pairs since
   the database was created; no names.
 
+### 3.4 Typed-sentence queue (v1.6)
+- The page holds its queue of typed sentences while any question is open, whoever raised it. A queued sentence is
+  never sent as the answer to a question.
+- A queued sentence whose replay comes back rejected `cancelled` (its question is no longer the open one) is sent
+  once more under a new `utt_id`.
+- A same-name question with three customers has three buttons; the third sends `teesra`.
+
+### 3.5 Noise handling (v1.7)
+
+The speech service transcribes people talking in the background as well as the person holding the phone
+(`Ramesh ka teen sau chalis udhaar, Mohan ka?`). Steady noise does little harm; other voices do. The server
+therefore measures every spoken turn, turns down what is clearly not the speaker, and asks before saving when it
+cannot tell the two apart. Code: `server/app/audio.py`, pure Python, one instance per turn.
+
+Measuring (per frame of 1,024 bytes = 32 ms)
+- The level of a frame is 10·log10 of its mean square. The speaker level is a peak follower that falls by 0.06 dB
+  per frame. While the turn runs, the background level is the upper quartile of the first 8 frames (the pre-roll,
+  recorded before the button was pressed); the gate below uses that.
+- At the end of the turn `separation_db` = speaker level − the lower of two background levels: that pre-roll level,
+  and the level that a quarter of the turn's frames are below (the 25th percentile). The second one keeps a
+  speaker who starts talking as they press from counting as background: measured on recorded clips, a clean or
+  lightly noisy turn is then never below 20 dB, with or without a lead-in.
+- A turn is `noisy` when it has at least 16 frames and `separation_db` is below `NOISE_CONFIRM_DB` (default 14).
+
+Turning the background down (the foreground gate)
+- A frame is near when it is at least 8 dB above the background level and at most 14 dB below the speaker level.
+  The gate opens after 2 near frames in a row and closes after 16 frames (512 ms) with no near frame. The 8 frames
+  (256 ms) before an opening count as inside. To make that possible the stream to the speech service runs 8 frames
+  behind and is flushed at the end of the turn, so the end of the turn is not delayed.
+- Frames outside the gate are sent at a quarter of their amplitude (12 dB lower), never removed: a wrong decision
+  makes a word quieter, it cannot delete it.
+- The gate fails open. When the separation at the first opening is below `NOISE_TRIM_DB` (default 16), or the gate
+  has not opened 48 frames (about 1.5 s) into the turn, every later frame passes unchanged. With `NOISE_TRIM=0`
+  nothing is ever turned down; the measuring still runs.
+
+Being careful
+- A noisy turn reaches the parser with `limits.noisy: true`. An append or amend that would be saved is then
+  confirmed first, exactly as strict mode does for a word it does not know: `confirm_entry` with
+  `confirm: {"type":"unsure","words":[],"noise":true}` and the usual question (`Ramesh ke ₹340 udhaar likhun?`).
+  Queries, undo and answers to an open question are not gated. Typed turns are never noisy.
+- `timing` carries `"noise": {"separation_db": 23.5, "noisy": false, "turned_down_ms": 420}` for spoken turns, and
+  `/api/metrics` counts noisy turns.
+- The page shows "Shor zyada hai" beside the reply of a noisy turn and the separation in the latency panel.
+
+Configuration: `NOISE_TRIM` (`1`), `NOISE_TRIM_DB` (`16`), `NOISE_CONFIRM_DB` (`14`; `0` switches the
+confirmation off).
+
 ## 4. Gnani API Platform (`server/app/gnani/`), verified against docs.gnani.ai
 
 Use the `websockets` library directly. The SDK is not used: it cannot send `commit`.
@@ -1008,6 +1180,10 @@ from `nlu.speak.number_to_words`, sent to TTS). Keep them under about 12 words. 
 | Confirm `writeoff` with an amount (1.16) | `{name} ke ₹{amt} maaf karun?` | `Write off ₹{amt} for {name}?` |
 | Missing amount, several entries pending (1.17) | `{name} ke kitne rupaye?` | `How many rupees for {name}?` |
 | Plausibility, several entries pending (1.17) | `{name} ke ₹{amt}, pakka?` | `₹{amt} for {name}, are you sure?` |
+| Missing amount of a write-off (1.18) | `{name} ke kitne rupaye maaf karun?` | `How many rupees to write off for {name}?` |
+| Replace check (1.18) | `Pichli entry hata kar {name} ke ₹{amt} {udhaar\|jama} likhoon?` | `Replace the last entry with ₹{amt} {credit\|payment} for {name}?` |
+| Write-off above the balance (1.18) | `{name} ke sirf ₹{bal} baaki hain. ₹{amt} maaf karun?` | `{name} owes only ₹{bal}. Write off ₹{amt}?` |
+| Same name, three customers (1.18) | `Kaunse {name}: {tag1}, {tag2} ya {tag3}?`; a customer with no tag is `bina tag wale` | `Which {name}: {tag1}, {tag2} or {tag3}?`; `the one with no tag` |
 | Confirm `duplicate` (K01) | `Yeh entry abhi likhi hai. Ek aur likhun?` | `I just saved this entry. Save another one?` |
 | Write-off saved | `{name} ke ₹{amt} maaf kiye.` | `Wrote off ₹{amt} for {name}.` |
 | Silence (M02) | `Kuch sunai nahi diya. Dobara boliye.` | `I could not hear anything. Please say it again.` |

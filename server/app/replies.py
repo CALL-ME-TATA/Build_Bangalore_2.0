@@ -224,17 +224,28 @@ class Replier:
     def confusable(self, a: int, b: int) -> Reply:
         return Reply(f"₹{fmt_amount(a)} ya ₹{fmt_amount(b)}?", f"{self.words(a)} रुपये या {self.words(b)} रुपये?")
 
-    def same_name(self, name: str, tags: list[str], about: tuple[int, str] | None = None) -> Reply:
-        """`about` = (amount, kind) of the clause, named when the sentence holds more than one entry."""
-        labels = [t if t else "pehle wale" for t in tags[:2]]
+    NO_TAG = "bina tag wale"
+
+    @classmethod
+    def _choices(cls, tags: list[str], or_word: str, untagged: str, second: str) -> str:
+        """Up to three labels in the order of the candidates: "a ya b", "a, b ya c". A customer with no tag is
+        `untagged` at its own place in the list (1.18)."""
+        labels = [t if t else untagged for t in tags[:3]]
         while len(labels) < 2:
-            labels.append("doosre wale")
+            labels.append(second)
+        return ", ".join(labels[:-1]) + f" {or_word} " + labels[-1]
+
+    def same_name(self, name: str, tags: list[str], about: tuple[int, str] | None = None) -> Reply:
+        """`tags`: the first tag of each candidate, in order ("" for none). `about` = (amount, kind) of the clause,
+        named when the sentence holds more than one entry."""
         at = as_ = ""
         if about:
             kt, ks = self._kind(about[1])
             at, as_ = f", ₹{fmt_amount(about[0])} {kt} wale", f", {self.words(about[0])} रुपये {ks} वाले"
-        return Reply(f"Kaunse {name}{at}: {labels[0]} ya {labels[1]}?",
-                     f"कौन से {_name(name)}{as_}: {_name(labels[0])} या {_name(labels[1])}?")
+        shown = self._choices(tags, "ya", self.NO_TAG, "doosre wale")
+        spoken_tags = [_name(t) if t else "" for t in tags]
+        said = self._choices(spoken_tags, "या", "बिना टैग वाले", "दूसरे वाले")
+        return Reply(f"Kaunse {name}{at}: {shown}?", f"कौन से {_name(name)}{as_}: {said}?")
 
     def which_entry(self, a: dict, b: dict, names: tuple[str, str] | None = None) -> Reply:
         """`names`: the customers of the two entries, said when the entries alone cannot be told apart."""
@@ -252,7 +263,13 @@ class Replier:
         return Reply(f"Sirf pichli entry hata sakta hoon: {name}, ₹{fmt_amount(amount)} {word_t}. Hata doon?",
                      f"सिर्फ़ पिछली एंट्री हटा सकता हूँ: {_name(name)}, {self.words(amount)} रुपये {word_s}। हटा दूँ?")
 
-    def replace_check(self) -> Reply:
+    def replace_check(self, ev: dict | None = None) -> Reply:
+        """`ev` = the new entry (customer display name, amount, kind); without all three the generic wording."""
+        if ev and ev.get("customer") and isinstance(ev.get("amount"), int) and ev.get("kind"):
+            word_t, word_s = self._kind(ev["kind"])
+            name, amt = ev["customer"], ev["amount"]
+            return Reply(f"Pichli entry hata kar {name} ke ₹{fmt_amount(amt)} {word_t} likhoon?",
+                         f"पिछली एंट्री हटा कर {_name(name)} के {self.words(amt)} रुपये {word_s} लिखूँ?")
         return Reply("Pichli entry hata kar yeh likhoon?", "पिछली एंट्री हटा कर यह लिखूँ?")
 
     def missing_amount(self) -> Reply:
@@ -264,6 +281,15 @@ class Replier:
     def missing_amount_for(self, name: str) -> Reply:
         """Missing amount when several entries are pending (1.17): says whose amount is asked."""
         return Reply(f"{name} ke kitne rupaye?", f"{_name(name)} के कितने रुपये?")
+
+    def writeoff_amount_for(self, name: str) -> Reply:
+        """Missing amount of a write-off event (1.18)."""
+        return Reply(f"{name} ke kitne rupaye maaf karun?", f"{_name(name)} के कितने रुपये माफ़ करूँ?")
+
+    def confirm_writeoff_above(self, name: str, balance: int, amount: int) -> Reply:
+        """A write-off larger than the balance (1.18)."""
+        return Reply(f"{name} ke sirf ₹{fmt_amount(balance)} baaki hain. ₹{fmt_amount(amount)} maaf karun?",
+                     f"{_name(name)} के सिर्फ़ {self.words(balance)} रुपये बाकी हैं। {self.words(amount)} रुपये माफ़ करूँ?")
 
     def plausibility_for(self, name: str, amount: int) -> Reply:
         """Plausibility when several entries are pending (1.17)."""
@@ -537,6 +563,8 @@ class Replier:
             if (len(events) == 1 and named and "kind" not in ev and "amount" not in ev
                     and pending.get("action", "append") == "append"):
                 return self.name_alone(name_of(ev))
+            if named and ev.get("kind") == "writeoff":
+                return self.writeoff_amount_for(name_of(ev))
             if len(events) >= 2 and named:
                 return self.missing_amount_for(name_of(ev))
             return self.missing_amount()
@@ -568,7 +596,7 @@ class Replier:
             if pending.get("action") == "undo" and ev.get("kind") in kinds and ev.get("amount") and ev.get("customer"):
                 return self.undo_check(name_of(ev), ev["amount"], ev["kind"])
             if pending.get("action") == "amend" and self._replaces_entry(ev, last):
-                return self.replace_check()
+                return self.replace_check(dict(ev, customer=name_of(ev)))
             return self.unclear_correction()
         if reason == "unclear_date":
             return self.unclear_date()
@@ -626,6 +654,8 @@ class Replier:
         if ctype == "half" and amount is not None:
             return self.confirm_half(name, amount)
         if ctype == "writeoff" and (balance is not None or amount is not None):
+            if amount is not None and balance is not None and amount > balance:
+                return self.confirm_writeoff_above(name, balance, amount)
             if amount is not None and amount != balance:
                 return self.confirm_entry(name, "writeoff", amount)  # an amount, not the whole balance
             return self.confirm_writeoff(name, balance if balance is not None else amount)
@@ -754,15 +784,12 @@ class EnglishReplier(Replier):
         return Reply(f"₹{fmt_amount(a)} or ₹{fmt_amount(b)}?", f"{self._rs(a)} or {self._rs(b)}?")
 
     def same_name(self, name: str, tags: list[str], about: tuple[int, str] | None = None) -> Reply:
-        labels = [t if t else "the first one" for t in tags[:2]]
-        while len(labels) < 2:
-            labels.append("the second one")
         at = as_ = ""
         if about:
             k = KIND_EN.get(about[1], about[1])
             at, as_ = f", for ₹{fmt_amount(about[0])} {k}", f", for {self._rs(about[0])} {k}"
-        return Reply(f"Which {name}{at}: {labels[0]} or {labels[1]}?",
-                     f"Which {_name(name)}{as_}: {labels[0]} or {labels[1]}?")
+        choices = self._choices(tags, "or", "the one with no tag", "the second one")
+        return Reply(f"Which {name}{at}: {choices}?", f"Which {_name(name)}{as_}: {choices}?")
 
     def which_entry(self, a: dict, b: dict, names: tuple[str, str] | None = None) -> Reply:
         ak, bk = KIND_EN.get(a["kind"], a["kind"]), KIND_EN.get(b["kind"], b["kind"])
@@ -778,7 +805,11 @@ class EnglishReplier(Replier):
         return Reply(f"I can only remove the last entry: {name}, ₹{fmt_amount(amount)} {k}. Remove it?",
                      f"I can only remove the last entry: {_name(name)}, {self._rs(amount)} {k}. Remove it?")
 
-    def replace_check(self) -> Reply:
+    def replace_check(self, ev: dict | None = None) -> Reply:
+        if ev and ev.get("customer") and isinstance(ev.get("amount"), int) and ev.get("kind"):
+            k, name, amt = KIND_EN.get(ev["kind"], ev["kind"]), ev["customer"], ev["amount"]
+            return Reply(f"Replace the last entry with ₹{fmt_amount(amt)} {k} for {name}?",
+                         f"Replace the last entry with {self._rs(amt)} {k} for {_name(name)}?")
         return self._same("Replace the last entry with this one?")
 
     def missing_amount(self) -> Reply:
@@ -789,6 +820,14 @@ class EnglishReplier(Replier):
 
     def missing_amount_for(self, name: str) -> Reply:
         return self._same(f"How many rupees for {name}?", f"How many rupees for {_name(name)}?")
+
+    def writeoff_amount_for(self, name: str) -> Reply:
+        return self._same(f"How many rupees to write off for {name}?",
+                          f"How many rupees to write off for {_name(name)}?")
+
+    def confirm_writeoff_above(self, name: str, balance: int, amount: int) -> Reply:
+        return Reply(f"{name} owes only ₹{fmt_amount(balance)}. Write off ₹{fmt_amount(amount)}?",
+                     f"{_name(name)} owes only {self._rs(balance)}. Write off {self._rs(amount)}?")
 
     def plausibility_for(self, name: str, amount: int) -> Reply:
         return Reply(f"₹{fmt_amount(amount)} for {name}, are you sure?",

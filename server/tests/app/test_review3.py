@@ -222,7 +222,7 @@ def test_unclear_correction_wording_unless_a_whole_new_entry(pipeline, parser, l
     assert pipeline.run_turn(s, "amount galat hai").reply_text == "Sahi amount boliye, ya hata do boliye."
     whole = question("unclear_correction", [_ev("payment", "sunita", 100, TODAY)], pending_extra={"action": "amend"})
     parser.canned["nahi sunita ne 100 diye"] = whole
-    assert pipeline.run_turn(s, "nahi sunita ne 100 diye").reply_text == "Pichli entry hata kar yeh likhoon?"
+    assert pipeline.run_turn(s, "nahi sunita ne 100 diye").reply_text == "Pichli entry hata kar Sunita ke ₹100 jama likhoon?"
 
 
 # ---- 6. fingerprint ignores punctuation ------------------------------------------------------------------------------

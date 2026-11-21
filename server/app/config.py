@@ -43,6 +43,10 @@ class Settings:
     tts_prewarm_explicit: bool = False  # TTS_PREWARM was set in the environment (allows prewarm inside tests)
     web_dir: str = ""
     allowed_origins: str = ""  # ALLOWED_ORIGINS: extra browser origins for /ws/session, comma separated
+    # Noise handling (CONTRACT 3.5): turn down what is clearly not the speaker; ask before saving a noisy turn.
+    noise_trim: bool = True
+    noise_trim_db: float = 16.0
+    noise_confirm_db: float = 14.0  # 0 switches the confirmation off
     admin_token: str = ""
     access_code: str = ""
     host: str = "127.0.0.1"
@@ -79,6 +83,9 @@ class Settings:
             tts_prewarm_explicit=bool(get("TTS_PREWARM")),
             web_dir=get("WEB_DIR"),
             allowed_origins=get("ALLOWED_ORIGINS"),
+            noise_trim=_flag(get("NOISE_TRIM", "1")),
+            noise_trim_db=float(get("NOISE_TRIM_DB", str(cls.noise_trim_db))),
+            noise_confirm_db=float(get("NOISE_CONFIRM_DB", str(cls.noise_confirm_db))),
             admin_token=get("ADMIN_TOKEN"),
             access_code=get("ACCESS_CODE"),
             host=get("HOST", cls.host),

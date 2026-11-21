@@ -111,6 +111,9 @@ _OOS_PHRASES = [tuple(fold(w) for w in p.split()) for p in _PV["out_of_scope_phr
 _PARTICLES = tuple(_PV["particles"])
 # A number directly before one of these, with no currency word, is a count of goods (1.15 B7).
 _GOODS_FOLDS = frozenset(fold(romanise_word(w) if is_devanagari(w) else w) for w in _PV["goods_words"])
+# Goods are never a customer name, also directly before a particle (1.18): "100 chawal ka aur 200 aate ka".
+_GOODS_NAME_FOLDS = _GOODS_FOLDS | frozenset(fold(romanise_word(w) if is_devanagari(w) else w)
+                                             for w in _PV["goods_names"])
 _MODIFIER_FOLDS = frozenset(fold(w) for w in _PV["amount_modifiers"])
 _QUESTION_OPENERS = frozenset(_PV["question_openers"])
 _GUESS_FOLDS = frozenset(fold(w) for w in _PV["guess_words"])
@@ -266,6 +269,7 @@ def _cut_glued(word: str, names: set[str], has_customer: bool = True) -> list[st
 # Keywords that may still be a customer name when they open a clause before the amount ("Diya 200 le gayi",
 # "Sham 300 le gaya", "Sara 500 le gayi"). Every other word of the vocabulary is never a new customer (1.16).
 _START_NAME_KW = {"give", "take", "mila", "aaya", "time", "poora"}
+_ADVERB_SE = frozenset(fold(w) for w in ("jaldi", "yaad", "dhyan", "dhyaan", "aaram", "araam", "galti"))
 _ROSTER_OVERRIDE_KW = {"filler", "nonname", "measure", "time", "yes", "ha", "ok", "ji", "first", "second", "kuch",
                        "ho", "weekday", "naya", "wahi", "sab", "kul", "round", "off", "bill"}
 
@@ -349,6 +353,32 @@ def _mark(toks: list[Tok], keep_fillers: bool = False) -> list[Tok]:
     for i in range(len(out) - 1):
         if out[i].rom in ("aa", "aaa") and out[i + 1].kw == "gaya":
             out[i].cls, out[i].kw = "kw", "aaya"
+    # A goods word is never a customer name (1.18), unless it starts a tag ("doodh wale").
+    for i, t in enumerate(out):
+        nxt = out[i + 1] if i + 1 < len(out) else None
+        if t.cls == "unk" and fold(t.rom) in _GOODS_NAME_FOLDS and not (nxt is not None and nxt.cls == "wale"):
+            t.cls = "fill"
+    # English "for" before a name keeps its place: a name after to / from / for may be the customer (1.18).
+    for i in range(len(out) - 1):
+        if out[i].raw == "for" and out[i + 1].cls == "unk":
+            out[i].cls, out[i].kw = "kw", "for_en"
+    # English "he" before a verb is the pronoun, not "hai" ("he paid 200", "he took another 100") (1.18).
+    for i in range(len(out) - 1):
+        if out[i].raw == "he" and out[i + 1].kw in ("paid", "took", "gave", "owes", "received", "lent", "pay_en",
+                                                    "give_en", "credit"):
+            out[i].cls, out[i].kw = "kw", "pronoun"
+    # "jaldi se", "yaad se", "dhyan se", "aaram se", "galti se": an adverb, never a name and its particle (1.18).
+    for i in range(len(out) - 1):
+        if fold(out[i].rom) in _ADVERB_SE and out[i + 1].kw == "se":
+            out[i].cls = out[i + 1].cls = "fill"
+            out[i].kw = out[i + 1].kw = ""
+    # "last night", "yesterday evening" are yesterday; "this morning" is today (1.18).
+    i = 0
+    while i + 1 < len(out):
+        a, b = out[i], out[i + 1]
+        if b.kw == "time" and (a.kw == "pichla" or a.raw == "this"):
+            out[i:i + 2] = [Tok(a.raw + " " + b.raw, "date", val=1 if a.kw == "pichla" else 0)]
+        i += 1
     # Dates, times and years are never amounts: "21 November", "2026 mein", "10 baje" (1.16).
     i = 0
     while i < len(out):
@@ -363,6 +393,10 @@ def _mark(toks: list[Tok], keep_fillers: bool = False) -> list[Tok]:
             out[i:i + 2] = [Tok("date", "date", val="unclear")]
         elif t.cls in ("num", "digit") and nxt is not None and fold(nxt.rom) == fold("baje"):
             out[i:i + 2] = [Tok(t.raw + " baje", "fill")]  # a time of day is ignored
+        elif (t.cls == "digit" and t.val is not None and 1 <= t.val <= 31 and nxt is not None and nxt.kw == "ko"
+              and sum(1 for x in out if x.cls in ("num", "digit")) >= 2
+              and not (i > 0 and (out[i - 1].cls == "gali" or out[i - 1].rom in nm.TAG_FILLERS))):
+            out[i:i + 2] = [Tok(t.raw + " ko", "date", val="unclear")]  # "15 ko 200 diye": a day of the month
         i += 1
     # "do hazaar mein se paanch sau": the first number is the total, not an amount (1.16).
     for i in range(len(out) - 2):
@@ -588,6 +622,9 @@ def _mark(toks: list[Tok], keep_fillers: bool = False) -> list[Tok]:
                 i = j
                 continue
             amt = Tok(" ".join(x.raw for x in span), "amt", val=_run_value(span))
+            if (len(span) == 2 and t.cls == "num" and fold(t.raw) == "sath" and span[1].cls == "num"
+                    and span[1].items[0][:2] == ("u", 100)):
+                amt.val, amt.alt = 700, 6000  # "sath sau": saat sau or saath sau (1.18)
             if (amt.val is None and len(span) == 3 and all(x.cls == "num" for x in span)
                     and all(x.items[0][0] == "n" and 1 <= x.items[0][1] <= 9 for x in span[:2])
                     and span[2].items[0] == ("u", 100, span[2].items[0][2])):
@@ -850,7 +887,7 @@ def _question(reason: str, events: list[dict], candidates: Any, index: int | Non
     if (reason == "same_name" and isinstance(candidates, list) and candidates
             and all(isinstance(c, dict) for c in candidates)):
         name = _display(str(candidates[0].get("name") or ""))
-        labels = [", ".join(str(t) for t in (c.get("tags") or [])) or "pehle wale" for c in candidates]
+        labels = [", ".join(str(t) for t in (c.get("tags") or [])) or "bina tag wale" for c in candidates]
         if len(labels) > 2:
             joined = ", ".join(labels[:-1]) + " ya " + labels[-1]
         else:
@@ -863,6 +900,11 @@ def _clarify(reason: str, action: str, events: list[dict], *, candidates: Any = 
              confirmed: set[str] | None = None, query: dict | None = None, question: str | None = None,
              extra: dict | None = None) -> dict[str, Any]:
     """A needs_clarification result. `extra` adds keys to pending (mode, change, target, attempts)."""
+    # A name that stood directly before a particle keeps that standing through later questions (1.18): kept in
+    # pending.confirmed, which the server passes back unchanged.
+    named = {f"name_np@{i}" for i, e in enumerate(events) if isinstance(e, dict) and e.get("_np")}
+    if named:
+        confirmed = set(confirmed or ()) | named
     events = [_clean_event(e) for e in events]
     pending: dict[str, Any] = {"reason": reason, "action": action}
     if action == "query":
@@ -906,6 +948,8 @@ def _confirm_question(confirm: dict, events: list[dict], index: int | None = Non
     if t == "half":
         return f"Aadha, yaani {amt} jama karun?"
     if t == "writeoff":
+        if isinstance(confirm.get("amount"), int) and isinstance(bal, int):
+            return f"{name} ke sirf {_rupees(bal)} baaki hain. {_rupees(confirm['amount'])} maaf karun?"
         return f"{name} ke {amt} maaf karun?"
     if t == "roundoff":
         return f"{amt} chhod dun?"
@@ -928,6 +972,11 @@ def _confirm_question(confirm: dict, events: list[dict], index: int | None = Non
     if t == "amend":
         return (f"{name} ki {_rupees(confirm.get('old', 0))} {_KIND_WORD.get(ev.get('kind'), '')} entry "
                 f"{_rupees(confirm.get('new', 0))} kar doon?")
+    if t == "unsure" and not confirm.get("words"):
+        # noisy audio (3.5): the entries are read back
+        if len(events) >= 2:
+            return _confirm_question({"type": "review"}, events)
+        return f"{name} ke {amt} {_KIND_WORD.get(ev.get('kind'), '')} likhun?".replace("  ", " ")
     if t == "unsure":
         words = " ".join(str(w) for w in confirm.get("words") or [])
         return f"'{words}' samajh nahi aaya. {name}, {amt} {_KIND_WORD.get(ev.get('kind'), '')} likhun?"
@@ -1013,8 +1062,16 @@ def _resolve(key: str, tags: list[str], ctx: dict) -> tuple[str, Any]:
 def _close_customers(key: str, ctx: dict, limit: int = 2) -> list[dict]:
     """Stored customers whose names are close to an unknown key (1.14 E05): candidates for the question."""
     out = []
+    words = key.split()
+    multi = len(words) >= 2 and not {"ka", "ki", "ke"} & set(words)
+    for c in (_same_head(_customers(ctx) or [], words[0]) if multi else []):
+        cw = c["name"].split()
+        if len(words) > len(cw) and nm.same_person(" ".join(words[:len(cw)]), c["name"]):
+            out.append(_cand(c))  # "Ramesh Chopra" when Ramesh is stored (1.18)
+            if len(out) >= limit:
+                return out
     for c in _customers(ctx) or []:
-        if nm.close_name(key, c["name"]):
+        if nm.close_name(key, c["name"]) and not any(o["id"] == c["id"] for o in out):
             out.append(_cand(c))
             if len(out) >= limit:
                 break
@@ -1107,10 +1164,12 @@ def _finalize(events: list[dict], action: str, ctx: dict, *, confirmed: set[str]
             return _clarify("missing_customer", action, events, confirmed=confirmed,
                             extra=dict(extra, confirm=confirm))
         if status == "ok":
-            if (data.get("new_customer") and _lim(ctx, "confirm_new_customer", False)
-                    and "new_customer" not in confirmed and _customers(ctx) is not None):
-                return _clarify("new_customer", action, events, candidates=_close_customers(data["customer"], ctx),
-                                index=i, confirmed=confirmed, extra=dict(extra, confirm=confirm))
+            if data.get("new_customer") and "new_customer" not in confirmed and _customers(ctx) is not None:
+                close = _close_customers(data["customer"], ctx)
+                if close or _lim(ctx, "confirm_new_customer", False) or (
+                        _lim(ctx, "strict", False) and not e.get("_np")):
+                    return _clarify("new_customer", action, events, candidates=close, index=i, confirmed=confirmed,
+                                    extra=dict(extra, confirm=confirm))
             _apply_fields(e, data)
     if "confusable_number" not in confirmed:
         for i, e in enumerate(events):
@@ -1167,10 +1226,12 @@ def _finalize(events: list[dict], action: str, ctx: dict, *, confirmed: set[str]
         if over is not None:
             return _clarify("confirm_entry", action, events, confirmed=confirmed,
                             extra=dict(extra, confirm=over), question=_confirm_question(over, events))
-        if action == "append" and not carry_form and _is_duplicate(events, ctx):
+        dup_at = _duplicate_at(events, ctx) if action == "append" and not carry_form else None
+        if dup_at is not None:
             dup = {"type": "duplicate"}
-            return _clarify("confirm_entry", action, events, confirmed=confirmed,
-                            extra=dict(extra, confirm=dup), question=_confirm_question(dup, events))
+            d_index = dup_at if len(events) >= 2 else None
+            return _clarify("confirm_entry", action, events, confirmed=confirmed, index=d_index,
+                            extra=dict(extra, confirm=dup), question=_confirm_question(dup, events, d_index))
         if unsure:
             sure = {"type": "unsure", "words": list(unsure)}
             return _clarify("confirm_entry", action, events, confirmed=confirmed,
@@ -1233,29 +1294,51 @@ def _overpayment_at(events: list[dict], ctx: dict, replaced: dict | None = None,
             continue
         credits = sum(x["amount"] for x in events if x.get("kind") == "credit"
                       and x.get("customer_id") == e.get("customer_id"))
+        # The payments of this customer said before this one in the utterance count too (1.18).
+        earlier = sum(x["amount"] for x in events[:i] if x.get("kind") == "payment" and isinstance(x.get("amount"), int)
+                      and x.get("customer_id") == e.get("customer_id"))
         if replaced and replaced.get("kind") == "payment" and nm.same_person(str(replaced.get("customer") or ""),
                                                                              e.get("customer", "")):
             bal += int(replaced.get("amount") or 0)
-        if e["amount"] > bal + credits:
+        if e["amount"] + earlier > bal + credits:
             return i, {"type": "overpayment", "balance": bal}
     return None
 
 
 def _is_duplicate(events: list[dict], ctx: dict) -> bool:
-    """The same complete entry as one of last_events within limits.duplicate_s (K01)."""
+    return _duplicate_at(events, ctx) is not None
+
+
+def _duplicate_at(events: list[dict], ctx: dict) -> int | None:
+    """The index of the first event that repeats an entry of last_events saved within limits.duplicate_s (K01).
+    Asked every time the entry is repeated (also the third time) and for one event of a longer utterance (1.18)."""
+    window = _lim(ctx, "duplicate_s", DUPLICATE_S)
     lt = ctx.get("last_turn")
-    if not isinstance(lt, dict) or lt.get("action") not in ("append", "amend") or not _num(lt.get("age_s")):
-        return False
-    if lt["age_s"] > _lim(ctx, "duplicate_s", DUPLICATE_S):
-        return False
     previous = ctx.get("last_events")
     if not isinstance(previous, list):
         le = _last_event(ctx)
         previous = [le] if le else []
+    recent = []
+    for p in previous:
+        if not isinstance(p, dict):
+            continue
+        age = p.get("age_s")
+        if _num(age):
+            if age <= window:
+                recent.append(p)
+        elif (isinstance(lt, dict) and lt.get("action") in ("append", "amend") and _num(lt.get("age_s"))
+              and lt["age_s"] <= window):
+            recent.append(p)
+    if isinstance(lt, dict) and lt.get("action") == "undo":
+        return None
+
     def same(a: dict, b: dict) -> bool:
-        return isinstance(b, dict) and all(a.get(k) == b.get(k) for k in ("kind", "amount", "date")) \
+        return all(a.get(k) == b.get(k) for k in ("kind", "amount", "date")) \
             and (a.get("customer") == b.get("customer") or nm.same_person(a.get("customer", ""), b.get("customer", "")))
-    return bool(events) and all(any(same(e, p) for p in previous) for e in events)
+    for i, e in enumerate(events):
+        if any(same(e, p) for p in recent):
+            return i
+    return None
 
 
 def _finalize_query(query: dict, ctx: dict) -> dict[str, Any]:
@@ -1308,6 +1391,10 @@ def _name_runs(toks: list[Tok], honorific_name: bool = False) -> list[_Name]:
     return runs
 
 
+# English verbs after their subject: "does Ramesh owe", "and Mohan paid" (1.18).
+_EN_SUBJECT_VERBS = {"owes", "paid", "took", "gave", "received", "lent", "pay_en", "give_en"}
+
+
 def _pick_names(toks: list[Tok], ctx: dict) -> tuple[list[_Name], int]:
     """Significant name runs (before a marker, at the clause start, after 'from') and the count of distinct names."""
     runs = _name_runs(toks)
@@ -1315,12 +1402,18 @@ def _pick_names(toks: list[Tok], ctx: dict) -> tuple[list[_Name], int]:
     for r in runs:
         nxt = toks[r.end] if r.end < len(toks) else None
         prev = toks[r.start - 1] if r.start > 0 else None
-        if (nxt is not None and nxt.kw in _MARKERS) or r.start == 0 or \
-                (prev is not None and (prev.kw in ("from", "to", "give_en", "pay_en", "gave", "send")
+        lead_only = all(t.cls == "date" or t.kw in ("aaj", "kal", "parso", "time", "weekday", "period")
+                        for t in toks[:r.start])
+        after = toks[r.end + 1] if r.end + 1 < len(toks) else None
+        if nxt is not None and nxt.kw in ("give", "take") and after is not None and after.kw == "gaya":
+            sig.append(r)  # the subject of "de gaya" / "le gaya": "udhaar ke 200 Ramesh de gaya" (1.18)
+            continue
+        if (nxt is not None and nxt.kw in _MARKERS) or r.start == 0 or (lead_only and nxt is not None and (
+                nxt.cls == "amt" or nxt.kw in _ACTION_VERBS)) or (nxt is not None and nxt.kw in _EN_SUBJECT_VERBS) or \
+                (prev is not None and (prev.kw in ("from", "to", "for_en", "give_en", "pay_en", "gave", "send")
                                        or prev.cls == "brk")):
             sig.append(r)
-    if not sig and runs:
-        sig = [runs[0]]
+    # Anywhere else an unknown word is an unknown word, never the customer (1.18).
     keyed = [r for r in sig if r.key]
     if keyed:
         for r in sig:
@@ -1414,12 +1507,28 @@ def _direction(toks: list[Tok], marker: str | None, has_name: bool) -> str | Non
         if (give or "gave" in cues) and marker != "ne" and "udhaar" not in cues:
             return "credit"  # "maine 455 diye": the shop gave
     if "wapas" in cues:
+        if take and (give or "gaya" in cues):
+            return "ambiguous"  # "200 diye the wo wapas le gaya": given and taken back (1.18)
         return "payment" if marker == "ne" else "ambiguous"
+    account = marker == "ka" and bool(cues & {"naam", "khata"})
+    if account:
+        # "X ke naam", "X ke khate mein" name the account; a payment word wins, both kinds ask (1.18).
+        paying = bool(cues & {"jama", "payment", "aaya", "mila", "kaat", "received", "paid", "chukaya"})
+        crediting = bool(cues & {"udhaar", "credit", "took"}) or (take and not paying)
+        if paying and crediting:
+            return "ambiguous"
+        if paying:
+            return "payment"
+        if crediting or "naam" in cues or cues & {"likh", "add", "daal", "chadha"}:
+            return "credit"
+        return "ambiguous"  # "Five hundred in Ramesh's account": no word says which way
     if "udhaar" in cues:
         if marker == "ne":
             return "credit" if take else "ambiguous"
         if marker == "se" or pay:
             return "ambiguous"
+        if give and gaya and marker != "ko" and not take:
+            return "ambiguous"  # "Ramesh udhaar ke 200 de gaya": a repayment or a credit (1.18)
         return "credit"
     if "credit" in cues:
         return "ambiguous"
@@ -1659,7 +1768,8 @@ def _clauses(toks: list[Tok]) -> list[list[Tok]]:
         if merged:
             seg_kws = _kws(seg)
             paycue = bool(seg_kws & (_PAY_CUES | {"paymode"})) or ("give" in seg_kws and (
-                "ne" in seg_kws or any(t.kw == "pronoun" and fold(t.rom).endswith("ne") for t in seg)))
+                "ne" in seg_kws or any(t.kw == "pronoun" and fold(t.rom).endswith("ne") for t in seg)
+                or ("gaya" in seg_kws and "take" not in seg_kws) or any(t.cls == "cur" for t in seg)))
             conflict = [Tok("paycue", "conflict")] if paycue and not seg_kws & {"udhaar", "credit", "took"} else []
             merged[-1] = merged[-1] + [Tok("|", "brk")] + seg + conflict
         else:
@@ -1732,6 +1842,10 @@ def _scan_questions(out: list[Tok], flags: _Flags) -> None:
     last = words[-1]
     if ends_q or (last in ("kya", "kyaa", "right", "na", "naa") and len(sig) > 1) or raws[0] in _QUESTION_OPENERS:
         flags.hearsay = True  # a question about an entry is confirmed, never saved directly
+    for i, t in enumerate(out[:-1]):
+        if i > 0 and fold(t.rom) in ("kya", "kyaa") and (out[i + 1].cls == "sep" or out[i + 1].kw == "aur"
+                                                         or out[i + 1].raw == "and"):
+            flags.hearsay = True  # "Ramesh ne 200 diye the kya aur ...": a question clause (1.18)
     for i, w in enumerate(words):
         nxt = sig[i + 1] if i + 1 < len(sig) else None
         prv = raws[i - 1] if i > 0 else ""
@@ -1854,6 +1968,61 @@ class _Draft:
         self.complete = False
 
 
+def _cash_sale(sig: list[Tok]) -> bool:
+    """A purchase with one amount and words saying the money was handed over (1.18): "200 ka saaman liya paise de
+    diye", "le gaya aur de gaya", "saaman diya aur paise le liye", "nakad liya", "bought goods for 200 in cash"."""
+    if sum(1 for t in sig if t.cls == "amt") != 1:
+        return False
+    kws = _kws(sig)
+    if kws & {"udhaar", "credit", "wapas", "baaki", "neg", "mat", "advance"}:
+        return False
+    buy = None  # index of the purchase verb and who handed the goods ("take": the customer took them)
+    for i, t in enumerate(sig):
+        if t.kw == "took" and fold(t.rom) in ("bought", "purchased"):
+            buy = (i, "take")
+            break
+        if t.kw in ("take", "give") and any(x.kw == "saaman" for x in sig[:i]):
+            buy = (i, "take" if t.kw == "take" else "give")
+            break
+        if t.kw == "take" and i + 1 < len(sig) and sig[i + 1].kw == "gaya":
+            buy = (i + 1, "take")
+            break
+    if buy is None:
+        return False
+    at, how = buy
+    if kws & {"paymode", "payment", "paid", "barabar"}:
+        return True
+    rest = sig[at + 1:]
+    if how == "take":
+        return any(t.kw == "give" for t in rest)  # "... liya, paise de diye", "le gaya aur de gaya"
+    return any(t.kw == "take" for t in rest) or any(  # "saaman diya aur paise le liye"
+        t.kw == "give" and k > 0 and rest[k - 1].kw == "pronoun" for k, t in enumerate(rest))
+
+
+def _balance_statement(sig: list[Tok], ctx: dict) -> dict | None:
+    """"X ka udhaar N ho gaya" states a balance; "X ka N udhaar batao" asks it: the balance query (1.18)."""
+    kws = _kws(sig)
+    amts = [t for t in sig if t.cls == "amt"]
+    if len(amts) != 1 or "udhaar" not in kws or kws & (_ACTION_VERBS - {"gaya"}):
+        return None
+    if any(t.cls == "stated" for t in sig):
+        return None
+    words = [t.kw for t in sig if t.cls == "kw"]
+    u_at = next(i for i, t in enumerate(sig) if t.kw == "udhaar")
+    a_at = sig.index(amts[0])
+    states = len(words) >= 2 and words[-2:] == ["ho", "gaya"] and a_at > u_at
+    asks = "batao" in kws
+    if not (states or asks):
+        return None
+    runs, _c = _pick_names(sig, ctx)
+    if not runs or not runs[0].key:
+        return None
+    r = runs[0]
+    if not (r.end < len(sig) and sig[r.end].kw in ("ka", "poss")):
+        return None
+    return {"type": "balance", "customer": _alias(r.key, ctx)}
+
+
 def _negated(marked: list[Tok]) -> bool:
     """"nahi diya", "abhi tak nahi aaya", "diya nahi": a negated verb. "nahi, 430" is a correction instead."""
     sig = [t for t in marked if t.cls not in ("cur", "fill", "aux")]
@@ -1866,13 +2035,38 @@ def _negated(marked: list[Tok]) -> bool:
             if (prev is not None and prev.cls == "kw" and prev.kw in ("give", "aaya", "mila")
                     and (nxt is None or nxt.cls == "sep" or nxt.kw in ("hai", "tha"))):
                 return True
+            if prev is not None and prev.kw == "likh" and t.kw == "mat":
+                return True  # "likhna mat" (1.18)
     return False
+
+
+_POSSESSIVE_PRONOUNS = frozenset(fold(w) for w in "his her uski uska uske iski iska iske unki unka unke inki inka inke "
+                                                   "उसकी उसका उसके".split())
+
+
+def _pronoun_relations(marked: list[Tok], ctx: dict) -> list[Tok]:
+    """"his wife", "uski biwi": the relation of the customer just spoken about, never a new customer (1.18). With
+    no customer to carry over, the words are set aside and the customer is asked."""
+    out = list(marked)
+    i = 0
+    while i + 1 < len(out):
+        t, nxt = out[i], out[i + 1]
+        rel = _RELATION_LOOKUP.get(fold(nxt.rom)) if nxt.cls == "unk" else None
+        if t.kw == "pronoun" and fold(t.rom) in _POSSESSIVE_PRONOUNS and rel is not None:
+            carry = _carry(ctx)
+            if carry is not None and isinstance(carry[1].get("customer"), str) and carry[1]["customer"]:
+                key = f"{carry[1]['customer']} {rel[1]} {rel[0]}"
+                out[i:i + 2] = [Tok(key, "unk", key)]
+            else:
+                out[i:i + 2] = [Tok(t.raw + " " + nxt.raw, "fill")]
+        i += 1
+    return out
 
 
 def _draft(toks: list[Tok], today: date, ctx: dict) -> _Draft:
     d = _Draft()
     toks, flags = _scan(toks, ctx)
-    marked = _mark(toks)
+    marked = _pronoun_relations(_mark(toks), ctx)
     d.marked = marked
     sig = _sig(marked)
     if not sig:
@@ -1898,11 +2092,21 @@ def _draft(toks: list[Tok], today: date, ctx: dict) -> _Draft:
         if runs and runs[0].key:  # "Lakshmi ko kitna dena hai": the balance (1.16)
             d.result = _query_result({"type": "balance", "customer": _alias(runs[0].key, ctx)}, ctx, d)
             return d
-    if "future" in kws or flags.conditional or dena_future:
+    lene_future = any(
+        (k == "lene" or (k == "kiya" and i > 0 and seq[i - 1] == "chukaya" and fold(sig[i - 1].rom).startswith("vas")))
+        and i + 1 < len(seq) and seq[i + 1] == "hai" for i, k in enumerate(seq))
+    if "future" in kws or flags.conditional or dena_future or lene_future:
         d.result = _rejected("future")
         return d
     if any(t.cls == "negamt" for t in sig):
         d.result = _rejected("invalid_number")  # "minus 50" (A15)
+        return d
+    if _cash_sale(sig):
+        d.result = _rejected("out_of_scope")  # a purchase paid on the spot is not udhaar (1.18)
+        return d
+    statement = _balance_statement(sig, ctx)
+    if statement is not None:
+        d.result = _query_result(statement, ctx, d)  # "X ka udhaar N ho gaya", "X ka N udhaar batao" (1.18)
         return d
     if sig[0].kw == "kya":
         # "Kya Ramesh ne 500 diye the?" asks, it does not instruct. Only a query is answered.
@@ -1918,18 +2122,30 @@ def _draft(toks: list[Tok], today: date, ctx: dict) -> _Draft:
         return d
     if "reminder" in kws:
         return _reminder(sig, ctx, d)
-    computed_shape = (len(amts) == 2 and bool(kws & {"bill", "discount"})) or (
-        len(amts) == 3 and all(isinstance(a.val, int) for a in amts) and amts[0].val - amts[1].val == amts[2].val > 0)
-    inst = None if computed_shape else _clause_instructions(marked, today, ctx, d)
+    if "kal" in kws and not kws & {"give", "take", "gaya", "tha", "mila", "aaya", "paid", "took", "gave"} and any(
+            t.kw == "likh" and i + 1 < len(sig) and sig[i + 1].kw == "dene" for i, t in enumerate(sig)):
+        for t in marked:
+            if t.kw == "kal":
+                t.cls, t.kw, t.val = "date", "", "unclear"  # "likh dena kal": later, not yesterday (1.18)
+        sig = _sig(marked)
+        kws = _kws(sig)
+    computed_shape = "stated" if _stated_rest(marked, sig, amts) else _computed_shape(sig, amts)
+    if computed_shape == "stated":
+        return _computed_rest(marked, sig, amts[0], today, ctx, d)
+    if computed_shape == "kept":
+        return _computed_kept(sig, amts, today, ctx, d)
+    if computed_shape:
+        return _computed(marked, sig, amts, today, ctx, d)
+    drop = _pay_and_drop(marked, sig, today, ctx, d)
+    if drop is not None:
+        return drop
+    inst = _clause_instructions(marked, today, ctx, d)
     if inst is not None:
         return inst
     if len(amts) == 1 and _reduction(sig):
         return _writeoff_amount(sig, amts[0], today, ctx, d)
-    if len(amts) == 1 and _is_amend_instruction(sig, toks):
+    if len(amts) == 1 and (_is_amend_instruction(sig, toks) or _is_restatement(sig, toks, ctx)):
         return _amend_instruction(sig, amts[0], today, ctx, d)
-    if len(amts) == 3 and all(isinstance(a.val, int) for a in amts) \
-            and amts[0].val - amts[1].val == amts[2].val > 0:
-        return _computed(marked, sig, amts, today, ctx, d)
     if "undo" in kws and (amts or kws & _LEDGER_CUES):
         if "ho" not in kws:
             return _delete_request(sig, ctx, d)
@@ -1976,13 +2192,13 @@ def _draft(toks: list[Tok], today: date, ctx: dict) -> _Draft:
             d.result = _rejected("not_ledger")  # "teen customer aaye the"
             return d
         return _no_amount(marked, sig, today, ctx, d)
-    if len(amts) == 2 and kws & {"bill", "discount"}:
-        return _computed(marked, sig, amts, today, ctx, d)
     d = _entries(marked, today, ctx, d)
     if d.result is None:
         qtys = [t.raw for t in sig if t.cls == "qty"]
         last = sig[-1] if sig else None
         stative = last is not None and last.kw in ("hai", "tha") and not kws & _ACTION_VERBS
+        stative = stative or any(t.kw == "likh" and i + 1 < len(sig) and sig[i + 1].kw == "tha"
+                                 for i, t in enumerate(sig))  # "... udhaar likha tha" (1.18)
         if flags.hearsay or stative:
             d.confirm = {"type": "hearsay"}  # a question, a guess or a statement of a balance is confirmed
         elif qtys:
@@ -2134,14 +2350,54 @@ def _is_amend_instruction(sig: list[Tok], toks: list[Tok]) -> bool:
     kws = _kws(sig)
     if [r for r in _name_runs(sig) if r.key or r.tags]:
         return False
-    if kws & (_LEDGER_CUES - {"likh", "add", "daal", "chadha"}) or kws & {"advance", "maine", "mujhe"}:
-        return False
+    if kws & (_LEDGER_CUES - {"likh", "add", "daal", "chadha"}) or kws & {"advance", "maine", "mujhe", "aur"}:
+        return False  # "uska 5 rupaye aur likh do": a new entry, never an amend (1.18)
     raws = [fold(t.rom) for t in toks if t.cls != "sep"]
     marker = bool(set(raws) & _AMEND_MARKERS) or bool(kws & {"galat", "makeit"})
     verb = bool(kws & {"kiya", "likh"}) or (raws and raws[-1] in (fold("tha"), fold("thi")))
     pronoun = "pronoun" in kws
     likhna_tha = fold("likhna") in raws and raws[-1] in (fold("tha"), fold("thi"))
     return (marker and verb) or (pronoun and verb) or likhna_tha  # "galat, 430" stays a direct correction (1.6)
+
+
+_RESTATE_WORDS = frozenset(fold(w) for w in (
+    "kar karo karna kardo kar do dijiye kijiye kariye amount sorry actually it was is i meant mean tha thi likhna "
+    "likho likh likhiye hai haan arre arey ji bas").split())
+
+
+def _is_restatement(sig: list[Tok], toks: list[Tok], ctx: dict) -> bool:
+    """Right after an entry: "430 kar do", "amount 430 karo", "sorry 430", "actually 350", "it was 350",
+    "I meant 350", and "Ramesh ka 430 likhna tha" / "Ramesh ka 430 udhaar tha" for the same customer and kind
+    correct that entry (1.18)."""
+    le = _last_event(ctx)
+    if le is None or not _entry_turn(ctx):
+        return False
+    kws = _kws(sig)
+    if "aur" in kws or kws & {"add", "daal", "chadha", "pronoun"}:
+        return False
+    words = [fold(t.rom) for t in toks if t.cls not in ("sep", "cur", "digit", "num")]
+    runs = [r for r in _name_runs(sig) if r.key]
+    if not runs:
+        return bool(words) and all(w in _RESTATE_WORDS for w in words)
+    if len(runs) != 1 or not nm.same_person(runs[0].key, str(le.get("customer") or "")):
+        return False
+    r = runs[0]
+    if not (r.end < len(sig) and sig[r.end].kw in ("ka", "poss")):
+        return False
+    raws = [fold(t.rom) for t in toks if t.cls != "sep"]
+    if not raws or raws[-1] not in (fold("tha"), fold("thi")):
+        return False
+    if fold("likhna") in raws:
+        return not kws & {"udhaar", "jama", "payment", "credit"} or _restated_kind(kws) == le.get("kind")
+    return _restated_kind(kws) == le.get("kind")
+
+
+def _restated_kind(kws: set[str]) -> str | None:
+    if kws & {"udhaar", "credit"} and not kws & {"jama", "payment"}:
+        return "credit"
+    if kws & {"jama", "payment"} and not kws & {"udhaar", "credit"}:
+        return "payment"
+    return None
 
 
 def _amend_instruction(sig: list[Tok], amt: Tok, today: date, ctx: dict, d: _Draft) -> _Draft:
@@ -2289,12 +2545,24 @@ def _writeoff_amount(sig: list[Tok], amt: Tok, today: date, ctx: dict, d: _Draft
             ev["customer"] = carry[1]["customer"]
             if carry[1].get("customer_id") is not None:
                 ev["customer_id"] = carry[1]["customer_id"]
-    return _confirmed_draft(d, ev, {"type": "writeoff", "amount": amt.val})
+    confirm: dict[str, Any] = {"type": "writeoff", "amount": amt.val}
+    c = _roster_customer(ev.get("customer"), ctx, ev.get("customer_id")) if ev.get("customer") else None
+    bal = _balance_of(c)
+    if c is not None and bal is not None:
+        if bal <= 0:
+            query = {"type": "balance", "customer": c["name"], "customer_id": c["id"]}
+            d.result = _query_result(query, ctx, d)  # nothing is due: the balance is said instead (1.18)
+            return d
+        if amt.val > bal:
+            confirm["balance"] = bal  # "Mohan ke sirf ₹140 baaki hain. ₹400 maaf karun?" (1.18)
+    return _confirmed_draft(d, ev, confirm)
 
 
 def _settle_type(sig: list[Tok]) -> str | None:
     """Amount-free settlement phrases (H04 to H09)."""
     kws = _kws(sig)
+    if "likh" in kws and "off" in kws and "balance" in kws and not kws & {"batao", "kitna", "kya", "kab"}:
+        return "writeoff"  # "write off Ramesh's balance" (1.18)
     if kws & {"batao", "kitna", "kya", "total", "balance", "kab"}:
         return None  # "poora hisaab batao" asks; it does not settle
     if "round" in kws and "off" in kws:
@@ -2348,6 +2616,12 @@ def _settle(marked: list[Tok], sig: list[Tok], kind: str, today: date, ctx: dict
     if customer is None:
         d.result = _clarify("missing_customer", "append", [{"date": today.isoformat()}], extra={"settle": kind})
         return d
+    if customer.get("customer_id") is None and _customers(ctx):
+        status, data = _resolve(customer["customer"], [], ctx)
+        if status == "same_name":
+            d.result = _clarify("same_name", "append", [{"customer": customer["customer"], "date": today.isoformat()}],
+                                candidates=data, index=0, extra={"settle": kind})
+            return d
     c = _roster_customer(customer["customer"], ctx, customer.get("customer_id"))
     bal = _balance_of(c)
     name = c["name"] if c else customer["customer"]
@@ -2387,6 +2661,147 @@ def _settle(marked: list[Tok], sig: list[Tok], kind: str, today: date, ctx: dict
 def _confirmed_draft(d: _Draft, ev: dict, confirm: dict) -> _Draft:
     d.events = [ev]
     d.confirm = confirm
+    d.result = None
+    return d
+
+
+def _purchase_word(sig: list[Tok]) -> bool:
+    kws = _kws(sig)
+    return "bill" in kws or ("saaman" in kws and bool(kws & {"take", "give", "took"})) or any(
+        t.kw == "took" and fold(t.rom) in ("bought", "purchased") for t in sig)
+
+
+def _computed_shape(sig: list[Tok], amts: list[Tok]) -> str | bool:
+    """The bill-paid-rest shapes (H01, H02, 1.18): an amount with a bill or purchase word, an amount with a paying
+    word and a word for the rest or the credit. "stated" for "N ka saaman liya M baaki hai". Any other three
+    amounts stay three amounts."""
+    kws = _kws(sig)
+    if not all(isinstance(a.val, int) for a in amts):
+        return False
+    paying = bool(kws & {"give", "paid", "gave", "jama", "payment", "mila", "aaya"})
+    rest = bool(kws & {"baaki", "udhaar", "credit", "likh"})
+    if len(amts) == 3 and amts[0].val - amts[1].val == amts[2].val > 0:
+        return _purchase_word(sig) and paying and rest
+    if len(amts) == 2:
+        if kws & {"bill", "discount"}:
+            return True
+        if _purchase_word(sig) and paying and "baaki" in kws and amts[0].val > amts[1].val:
+            return True
+        if _kept_on_account(sig, amts):
+            return "kept"
+    return False
+
+
+def _kept_on_account(sig: list[Tok], amts: list[Tok]) -> bool:
+    """"Ramesh ne 500 ka saaman liya, 200 udhaar rakha / udhaar likh do / khate mein likh do": a purchase and a
+    smaller credit kept on the account, no paid amount (1.18): one credit of the second amount."""
+    if not _purchase_word([t for t in sig[:sig.index(amts[1])]]):
+        return False
+    if not 0 < amts[1].val < amts[0].val:
+        return False
+    if len({r.key for r in _pick_names(sig, {})[0] if r.key}) > 1 or "aur" in _kws(sig):
+        return False  # another customer, or another entry: each clause on its own
+    rest = sig[sig.index(amts[1]) + 1:]
+    rkws = _kws(rest)
+    if _kws(sig) & {"paid", "gave", "jama", "payment", "mila", "aaya"}:
+        return False
+    if any(t.kw == "give" for t in sig[sig.index(amts[0]) + 1:sig.index(amts[1]) + 1]):
+        return False  # "N ka saaman liya, M diye": a payment, not a kept credit
+    kept = any(fold(t.rom) in _KEEP_WORDS for t in rest) or "likh" in rkws
+    return bool(kept and (rkws & {"udhaar", "khata", "credit"}))
+
+
+def _stated_rest(marked: list[Tok], sig: list[Tok], amts: list[Tok]) -> bool:
+    """"N ka saaman liya M baaki hai": a purchase and the rest stated, M below N (1.18)."""
+    if len(amts) != 1 or not isinstance(amts[0].val, int) or not _purchase_word(sig):
+        return False
+    if _kws(sig) & {"give", "paid", "gave", "jama", "payment", "mila", "aaya"}:
+        return False
+    stated = [t for t in marked if t.cls == "stated"]
+    if not stated or not any(t.kw == "baaki" for t in marked):
+        return False
+    rest = _stated_value(stated)
+    return isinstance(rest, int) and 0 < rest < amts[0].val
+
+
+def _stated_value(toks: list[Tok]) -> int | None:
+    span = []
+    for t in toks:
+        c = t.copy()
+        c.cls = "digit" if (t.val is not None and not t.items) else "num"
+        span.append(c)
+    return _run_value(span) if span else None
+
+
+_KEEP_WORDS = frozenset(fold(w) for w in "rakha rakhe rakhi rakho rakh rakhna rakhiye".split())
+
+
+def _computed_kept(sig: list[Tok], amts: list[Tok], today: date, ctx: dict, d: _Draft) -> _Draft:
+    bill, rest = amts[0].val, amts[1].val
+    names = [r for r in _pick_names(sig, ctx)[0] if r.key]
+    ev: dict[str, Any] = {"kind": "credit", "amount": rest, "date": today.isoformat()}
+    if names:
+        ev["customer"] = _alias(names[0].key, ctx)
+        for r in names:
+            d.spoken.update(_run_words(r))
+    for t in sig:
+        if fold(t.rom) in _KEEP_WORDS:
+            d.spoken.add(t.raw)  # "rakha" is understood here
+    return _confirmed_draft(d, ev, {"type": "computed", "bill": bill, "paid": bill - rest})
+
+
+def _computed_rest(marked: list[Tok], sig: list[Tok], amt: Tok, today: date, ctx: dict, d: _Draft) -> _Draft:
+    """"N ka saaman liya M baaki hai": one credit of M, confirmed as computed (1.18)."""
+    stated = [t for t in marked if t.cls == "stated"]
+    rest = _stated_value(stated)
+    names = [r for r in _name_runs(sig) if r.key]
+    ev: dict[str, Any] = {"kind": "credit", "amount": rest, "date": today.isoformat()}
+    if names:
+        ev["customer"] = _alias(names[0].key, ctx)
+        for r in names:
+            d.spoken.update(_run_words(r))
+    return _confirmed_draft(d, ev, {"type": "computed", "bill": amt.val, "paid": amt.val - rest})
+
+
+def _pay_and_drop(marked: list[Tok], sig: list[Tok], today: date, ctx: dict, d: _Draft) -> _Draft | None:
+    """A payment and "drop the rest" for one customer ("X ne N diye baaki chhod do", "... aur baaki maaf kar do",
+    "... baaki M chhod do") (1.18 S6). With a balance B above N: payment N and write-off B - N behind the review.
+    Otherwise the write-off has no amount and is asked. The paid amount is never the write-off amount."""
+    kws_all = _kws(marked)
+    if not any(t.kw == "baaki" for t in marked) or not (kws_all & {"chhod", "maaf"}
+                                                        or ("likh" in kws_all and "off" in kws_all)):
+        return None
+    amts = [t for t in sig if t.cls == "amt"]
+    at = next(i for i, t in enumerate(marked) if t.kw == "baaki")
+    before = [t for t in marked[:at] if t.cls not in ("fill", "aux", "cur")]
+    after = marked[at + 1:]
+    after_amts = [t for t in after if t.cls in ("amt", "stated")]
+    before_amts = [t for t in before if t.cls == "amt"]
+    if len(before_amts) != 1 or len(amts) - len(before_amts) > 1:
+        return None
+    c = _analyse_clause(before, ctx, today)
+    if c.kind != "payment" or not (c.names and c.names[0].key):
+        return None
+    if {r.key for r in _name_runs(_sig(after)) if r.key} - {c.names[0].key}:
+        return None  # another customer's rest: each clause on its own (1.17)
+    key = c.names[0].key
+    for r in c.names:
+        d.spoken.update(_run_words(r))
+    paid = before_amts[0].val
+    date_iso = c.date or today.isoformat()
+    pay = {"kind": "payment", "customer": key, "amount": paid, "date": date_iso}
+    off: dict[str, Any] = {"kind": "writeoff", "customer": key, "date": date_iso}
+    if after_amts:
+        stated = [t for t in after_amts if t.cls == "stated"]
+        given = after_amts[0].val if after_amts[0].cls == "amt" else _stated_value(stated)
+        if isinstance(given, int) and given > 0:
+            off["amount"] = given  # "baaki 40 chhod do"
+    else:
+        bal = _balance_of(_roster_customer(key, ctx))
+        if isinstance(paid, int) and bal is not None and bal > paid:
+            off["amount"] = bal - paid
+    d.events = [pay, off]
+    d.confirm = {"type": "review"} if "amount" in off else None
     d.result = None
     return d
 
@@ -2479,6 +2894,8 @@ def _no_amount(marked: list[Tok], sig: list[Tok], today: date, ctx: dict, d: _Dr
         ev["customer"] = name.key
         if name.tags:
             ev["tags"] = name.tags
+        if name.end < len(sig) and sig[name.end].kw in _MARKERS:
+            ev["_np"] = True  # the name stands directly before a particle (1.18)
     if clause.date:
         ev["date"] = clause.date
     d.events = [ev]
@@ -2493,6 +2910,14 @@ def _entries(marked: list[Tok], today: date, ctx: dict, d: _Draft) -> _Draft:
     clause_toks = _clauses([t for t in marked if t.cls not in ("fill", "aux", "cur")])
     carry = _carry(ctx)
     events: list[dict] = []
+    # A date word before the first name applies to every clause with no date word of its own (1.18).
+    lead: list[Tok] = []
+    for t in sig_all:
+        if t.cls in ("unk", "hon", "tag", "amt") or t.kw == "pronoun":
+            break
+        if _is_date_word(t):
+            lead.append(t)
+    lead_date = _date_of(lead, today)[0] if lead else None
     prev_customer: dict | None = None
     explicit_any = False
     zero = False
@@ -2522,6 +2947,9 @@ def _entries(marked: list[Tok], today: date, ctx: dict, d: _Draft) -> _Draft:
             ev["customer"] = r.key
             if r.tags:
                 ev["tags"] = r.tags
+            csig = _sig(toks)
+            if r.end < len(csig) and csig[r.end].kw in _MARKERS:
+                ev["_np"] = True  # the name stands directly before a particle
             prev_customer = {"customer": r.key, "tags": r.tags}
             for nr in c.names:
                 d.spoken.update(_run_words(nr))
@@ -2573,6 +3001,8 @@ def _entries(marked: list[Tok], today: date, ctx: dict, d: _Draft) -> _Draft:
                 explicit_any = True  # a complete entry: customer, amount and direction
         if c.date:
             ev["date"] = c.date
+        if lead_date and ci > 0 and not any(_is_date_word(t) for t in toks):
+            ev["date"] = lead_date
         if prev_customer is not None and prev_customer.get("customer_id") is not None \
                 and ev.get("customer") == prev_customer["customer"] and "customer_id" not in ev and not c.names:
             ev["customer_id"] = prev_customer["customer_id"]
@@ -2611,6 +3041,11 @@ def _entries(marked: list[Tok], today: date, ctx: dict, d: _Draft) -> _Draft:
         return d
     d.result = None  # finalised by the caller (needs the confusable check)
     return d
+
+
+def _is_date_word(t: Tok) -> bool:
+    return t.cls == "date" or t.kw in ("aaj", "kal", "parso", "narson", "weekday", "hafte", "mahine", "tarikh",
+                                       "period")
 
 
 def _last_events(ctx: dict) -> list[dict]:
@@ -2743,6 +3178,13 @@ def _correction(marked: list[Tok], sig: list[Tok], today: date, ctx: dict, d: _D
             return _no_amount(rebuilt, _sig(rebuilt), today, ctx, d)
         return _entries(rebuilt, today, ctx, d)
     targets = _last_events(ctx)
+    if not targets and s_amts and len(s_amts) == 1 and len(p_amts) <= 1 and s_names and \
+            _analyse_clause(suffix, ctx, today).kind in ("credit", "payment"):
+        # "Ramesh paid 200 not 300" with no earlier entry: the entry that was meant, confirmed (1.18).
+        d = _entries(suffix, today, ctx, d)
+        if d.result is None:
+            d.confirm = {"type": "hearsay"}
+        return d
     d.action = "amend"
     lt = ctx.get("last_turn")
     if not targets or (isinstance(lt, dict) and lt.get("action") == "undo"):
@@ -2800,7 +3242,7 @@ def _correction(marked: list[Tok], sig: list[Tok], today: date, ctx: dict, d: _D
                  "date": change.get("date", today.isoformat())}
         if change.get("tags"):
             fresh["tags"] = change["tags"]
-        d.result = _clarify("unclear_correction", "amend", [fresh], question="Pichli entry hata kar yeh likhoon?",
+        d.result = _clarify("unclear_correction", "amend", [fresh], question=_replace_question(fresh),
                             extra={"mode": "replace", "target": _amend_target(targets, target_ev)})
         return d
     d.events = [new]
@@ -2837,6 +3279,8 @@ def _confusable_checker(utterance: str, events: list[dict], today: date, ctx: di
                 for i, (a, b) in enumerate(zip(events, other)):
                     if "amount" in b and a.get("amount") != b["amount"]:
                         return i, [final_events[i]["amount"], b["amount"]]
+                    if isinstance(b.get("_alt"), int) and b["_alt"] != a.get("amount"):
+                        return i, [final_events[i]["amount"], b["_alt"]]  # "saath sau" heard as well (1.18)
         return None
 
     return check
@@ -2863,6 +3307,10 @@ def _unknown_words(d: _Draft, events: list[dict], ctx: dict) -> list[str]:
             known.update(str(tag).split())
     out: list[str] = []
     for t in d.marked:
+        if t.cls == "kw" and t.kw == "nevername" and fold(t.rom) in _STRICT_STRAYS:
+            if t.raw not in out:
+                out.append(t.raw)  # "300 by UPI", "he took another 100": never a name, still confirmed (1.18)
+            continue
         if t.cls != "unk":
             continue
         roman = romanise_word(t.raw, long_vowels=False) if is_devanagari(t.raw) else t.raw
@@ -2871,6 +3319,36 @@ def _unknown_words(d: _Draft, events: list[dict], ctx: dict) -> list[str]:
                 continue
             out.append(w)
     return out
+
+
+def _noise_gate(result: dict, ctx: dict) -> dict:
+    """With limits.noisy (the server's flag for a noisy spoken turn), a save is confirmed first, as strict mode does
+    for a word it does not know: confirm `unsure` with no words and `noise: true` (3.5). An `unsure` confirmation
+    already raised keeps its words and gains `noise: true`. Queries, undo and other questions are left alone."""
+    if not _lim(ctx, "noisy", False):
+        return result
+    if result.get("status") == "ok" and result.get("action") in ("append", "amend"):
+        events = result.get("events") or []
+        confirm = {"type": "unsure", "words": [], "noise": True}
+        extra: dict[str, Any] = {"confirm": confirm}
+        if result.get("action") == "amend" and result.get("target") not in (None, "last"):
+            extra["target"] = result["target"]
+        out = _clarify("confirm_entry", result["action"], events, extra=extra,
+                       question=_confirm_question(confirm, events))
+        if result.get("lang"):
+            out["lang"] = result["lang"]
+        return out
+    conf = result.get("confirm")
+    if result.get("status") == "needs_clarification" and isinstance(conf, dict) and conf.get("type") == "unsure":
+        conf = dict(conf, noise=True)
+        result = dict(result, confirm=conf)
+        if isinstance(result.get("pending"), dict):
+            result["pending"] = dict(result["pending"], confirm=conf)
+    return result
+
+
+# Words that are never a name and say nothing about the entry: in strict mode the entry is confirmed (1.18).
+_STRICT_STRAYS = frozenset(fold(w) for w in "another out by sabko kisi koi jo".split())
 
 
 def _strict_gate(result: dict, d: _Draft, ctx: dict) -> dict:
@@ -2893,11 +3371,11 @@ def _strict_gate(result: dict, d: _Draft, ctx: dict) -> dict:
 def _fresh(toks: list[Tok], utterance: str, today: date, ctx: dict) -> tuple[dict, _Draft]:
     d = _draft(toks, today, ctx)
     if d.result is not None:
-        return _carry_unsure(_strict_gate(d.result, d, ctx), d, ctx), d
+        return _noise_gate(_carry_unsure(_strict_gate(d.result, d, ctx), d, ctx), ctx), d
     events = d.events or []
     checker = _confusable_checker(utterance, events, today, ctx)
     result = _finalize(events, "append", ctx, confusable=checker, confirm=d.confirm, carry_form=d.carry_form)
-    return _carry_unsure(_strict_gate(result, d, ctx), d, ctx), d
+    return _noise_gate(_carry_unsure(_strict_gate(result, d, ctx), d, ctx), ctx), d
 
 
 def _carry_unsure(result: dict, d: _Draft, ctx: dict) -> dict:
@@ -2965,9 +3443,21 @@ def _only_number(sig: list[Tok], customer: str | None = None, allow_neg: bool = 
     return None
 
 
+_ADDRESS_WORDS = frozenset(fold(w) for w in "bhai bhaiya bhaiyya sir madam beta didi behen yaar boss uncle aunty "
+                                                 "saheb sahab ji".split())
+_YES_EXTRA = frozenset(fold(w) for w in "hau open create ahead go khol kholo kholiye".split())
+
+
 def _is_yes(sig: list[Tok]) -> bool:
-    kws = [t.kw if t.cls == "kw" else t.cls for t in sig]
-    allowed = _YES | {"hai", "filler", "likh", "kiya", "aux", "to"}
+    """Yes, also with an address word or a filler ("haan bhai", "theek hai sir", "yeah open it", "go ahead",
+    "khata khol do") (1.18)."""
+    kws = []
+    for t in sig:
+        f = fold(t.rom)
+        if t.cls == "hon" or (t.cls in ("unk", "kw") and f in _ADDRESS_WORDS and t.kw not in _YES):
+            continue
+        kws.append("yes" if f in _YES_EXTRA else (t.kw if t.cls == "kw" else t.cls))
+    allowed = _YES | {"hai", "filler", "likh", "kiya", "aux", "to", "khata"}
     return bool(kws) and all(k in allowed for k in kws) and any(k in _YES for k in kws)
 
 
@@ -2999,7 +3489,14 @@ def _ordinal(sig: list[Tok]) -> int | None:
         return 0
     if kws == ["second"]:
         return 1
+    words = [fold(t.rom) for t in sig if not (nm.is_tag_word(t.rom) or (t.cls == "kw" and t.kw in ("filler", "hai",
+                                                                                                   "ji")))]
+    if len(words) == 1 and words[0] in _THIRD:
+        return 2  # "teesra", "third" (1.18)
     return None
+
+
+_THIRD = frozenset(fold(w) for w in "teesra teesri teesre tisra tisri third".split())
 
 
 def _pehle_wale(sig: list[Tok]) -> bool:
@@ -3091,7 +3588,7 @@ def _reask(pending: dict, ctx: dict) -> dict[str, Any]:
     question = None
     mode = pending.get("mode")
     if mode == "replace":
-        question = "Pichli entry hata kar yeh likhoon?"
+        question = _replace_question(events[0]) if events else "Pichli entry hata kar yeh likhoon?"
     elif mode in ("which_entry", "confirm_undo"):
         cands = [c for c in (pending.get("candidates") or events) if isinstance(c, dict)]
         if mode == "which_entry" and cands:
@@ -3115,6 +3612,12 @@ def _reask(pending: dict, ctx: dict) -> dict[str, Any]:
     if pending.get("quantity"):
         result["quantity"] = True
     return result
+
+
+def _replace_question(e: dict) -> str:
+    """The replace check names the new entry (1.18, 5.1)."""
+    return (f"Pichli entry hata kar {_display(str(e.get('customer') or ''))} ke {_rupees(e.get('amount', 0))} "
+            f"{_KIND_WORD.get(e.get('kind'), '')} likhoon?")
 
 
 def _pending_target(pending: dict) -> Any:
@@ -3142,8 +3645,8 @@ def _answer_correction(sig, toks, utterance, today, ctx, pending, events) -> dic
     if mode == "replace":
         if _is_yes(sig):
             return _finalize(events, "amend", ctx, target=_pending_target(pending))
-        if _is_plain_no(sig):
-            return _finalize(events, "append", ctx)  # keep the old entry and add this one
+        if _is_plain_no(sig) or _is_no(sig):
+            return _rejected("cancelled")  # nothing is saved and the old entry stays (1.18)
         return None
     if mode == "which_entry":
         cands = [c for c in (pending.get("candidates") or []) if isinstance(c, dict)]
@@ -3161,6 +3664,12 @@ def _answer_correction(sig, toks, utterance, today, ctx, pending, events) -> dic
             if kind is not None:
                 hits = [c for c in cands if c.get("kind") == kind]
                 pick = hits[0] if len(hits) == 1 else None
+            else:
+                runs = _answer_names([t for t in sig if not nm.is_tag_word(t.rom)]) or []
+                keys = [r.key for r in runs if r.key]
+                if len(keys) == 1:  # "Mohan", "Mohan wali" (1.18)
+                    hits = [c for c in cands if nm.same_person(keys[0], str(c.get("customer") or ""))]
+                    pick = hits[0] if len(hits) == 1 else None
         if pick is None or not change:
             return None
         new = _apply_change(pick, change)
@@ -3189,6 +3698,9 @@ def _answer_correction(sig, toks, utterance, today, ctx, pending, events) -> dic
 
 
 _ONE_EVENT_CONFIRMS = {"overpayment", "settle", "half", "writeoff", "roundoff"}
+# Words that make an answer a complete query (1.18): anything less is read as an answer.
+_QUERY_WORDS = {"kitna", "kya", "kiska", "kis", "kaun", "batao", "total", "hisaab", "balance", "summary", "sabse",
+                "kab", "outstanding", "kul", "baaki"}
 
 
 def _event_index(pending: dict, events: list[dict]) -> int | None:
@@ -3209,6 +3721,12 @@ def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pen
     action = pending.get("action") or "append"
     events = [dict(e) for e in (pending.get("events") or []) if isinstance(e, dict)]
     confirmed = set(c for c in (pending.get("confirmed") or []) if isinstance(c, str))
+    for c in list(confirmed):
+        if c.startswith("name_np@"):
+            confirmed.discard(c)
+            k = c.split("@", 1)[1]
+            if k.isdigit() and int(k) < len(events):
+                events[int(k)]["_np"] = True
     candidates = pending.get("candidates")
     target = _pending_target(pending)
     sig = _answer_tokens(toks)
@@ -3217,7 +3735,7 @@ def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pen
     # A complete entry (customer, amount and direction) or a query is a new utterance, never an answer: it is
     # parsed fresh and the pending question is dropped (1.9, 1.13). This holds for every pending reason.
     fresh_result, fresh_d = _fresh(toks, utterance, today, ctx)
-    if fresh_d.complete:
+    if fresh_d.complete and not (fresh_d.action == "query" and not _kws(sig) & _QUERY_WORDS):
         return fresh_result
 
     confirm = pending.get("confirm") if isinstance(pending.get("confirm"), dict) else None
@@ -3317,9 +3835,16 @@ def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pen
         cands = [c for c in (candidates or []) if isinstance(c, dict)]
         i = _target_index(events, pending, "customer_id", None) if events else 0
         kws = _kws(sig)
-        plain = [t for t in sig if not (t.cls == "kw" and t.kw in ("filler", "hai", "ji"))]
-        if events and (_is_yes(sig) or ("naya" in kws and all(
-                t.kw in ("naya", "yes", "ok", "kiya", "measure", "khata") or t.cls == "aux" for t in plain))):
+        plain = [t for t in sig if not (t.cls == "kw" and t.kw in ("filler", "hai", "ji"))
+                 and not (t.cls == "hon" or fold(t.rom) in _ADDRESS_WORDS)]
+        new_word = "naya" in kws and all(
+            t.kw in ("naya", "yes", "ok", "kiya", "measure", "khata") or t.cls == "aux" for t in plain)
+        if cands and _is_yes(sig) and not new_word:
+            return _reask(pending, ctx)  # "Rames naya grahak hai, ya Ramesh?" takes no bare yes (1.18)
+        if cands and plain and all(fold(t.rom) in _PURANA for t in plain) and len(cands) == 1 and events:
+            _apply_fields(events[i], {"customer": cands[0].get("name"), "customer_id": cands[0].get("id")})
+            return done(events)  # "purana": the stored customer
+        if events and (_is_yes(sig) or new_word):
             # One question per distinct unknown name (1.16): the yes covers every event naming the same person, under
             # one key, so one account is opened; another unknown name gets its own question.
             key = events[i].get("customer")
@@ -3350,7 +3875,7 @@ def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pen
                 hits = [c for c in cands if nm.same_person(keyed[0].key, c.get("name", ""))]
                 if len(hits) == 1:
                     pick = hits[0]
-                elif not hits and events:
+                elif not hits and events and _can_be_answer_name(keyed[0], sig, ctx):
                     events[i]["customer"] = keyed[0].key  # another name: resolve it again (1.8)
                     for key in ("customer_id", "new_customer", "tags"):
                         events[i].pop(key, None)
@@ -3428,9 +3953,12 @@ def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pen
         pick = None
         if cands:
             o = _ordinal(sig)
-            if _pehle_wale(sig):
-                untagged = [c for c in cands if not c.get("tags")]
-                pick = untagged[0] if len(untagged) == 1 else cands[0]
+            untagged = [c for c in cands if not c.get("tags")]
+            bina = {fold(t.rom) for t in sig} >= {fold("bina"), fold("tag")}
+            if bina:
+                pick = untagged[0] if len(untagged) == 1 else None  # "bina tag wale" (1.18)
+            elif _pehle_wale(sig):
+                pick = cands[0]  # "pehle wale" is the first one spoken, whatever its tag (1.18)
             elif o is not None and o < len(cands):
                 pick = cands[o]
             elif not _foreign_amount(sig, events) and not _kind_conflict(sig, events) \
@@ -3459,6 +3987,13 @@ def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pen
                 return {"status": "ok", "action": "query", "query": q}
             if action == "reminder" and isinstance(pending.get("reminder"), dict):
                 return dict(pending["reminder"], customer=pick.get("name"), customer_id=pick.get("id"))
+            if isinstance(pending.get("settle"), str):
+                # "Suresh ne poora de diya" -> which Suresh -> the settle confirmation (1.18)
+                dd = _settle([], [], pending["settle"], today, ctx, _Draft(),
+                             customer={"customer": pick.get("name"), "customer_id": pick.get("id")})
+                if dd.result is not None:
+                    return dd.result
+                return _finalize(dd.events or [], "append", ctx, confirm=dd.confirm)
             i = _target_index(events, pending, "customer", pick.get("name"))
             if events:
                 _apply_fields(events[i], {"customer": pick.get("name"), "customer_id": pick.get("id")})
@@ -3504,6 +4039,7 @@ def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pen
             if events:
                 i = _target_index(events, pending, "customer", None)
                 events[i]["customer"] = key
+                events[i]["_np"] = True  # a name given as the answer to "Kiska khata?" is a name
                 for k2 in ("customer_id", "new_customer", "tags"):
                     events[i].pop(k2, None)
                 if runs[0].tags:
@@ -3519,10 +4055,19 @@ def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pen
 
     elif reason == "ambiguous_direction":
         i = _target_index(events, pending, "kind", None) if events else 0
+        dated = [t for t in sig if _is_date_word(t)]
+        undated = [t for k, t in enumerate(sig) if t.cls != "amt" and not _is_date_word(t)
+                   and not (dated and t.kw in ("ka", "poss") and k > 0 and _is_date_word(sig[k - 1]))]
         kind = None if _foreign_amount(sig, events) else \
-            _answer_kind([t for t in sig if t.cls != "amt"], events[i].get("customer") if events else None)
+            _answer_kind(undated, events[i].get("customer") if events else None)
         if kind is not None and events:
             events[i]["kind"] = kind
+            if dated:
+                iso, issue = _date_of(dated, today)
+                if issue:
+                    events[i].pop("date", None)  # the date is asked next
+                else:
+                    events[i]["date"] = iso  # "kal udhaar", "udhaar kal ka" (1.18)
             return done(events)
 
     elif reason == "unclear_date":
@@ -3545,11 +4090,22 @@ def _answer_pending(toks: list[Tok], utterance: str, today: date, ctx: dict, pen
                 return done(events)
 
     result, d = _fresh(toks, utterance, today, ctx)
-    if d.complete:
+    if d.complete and not (d.action == "query" and not _kws(sig) & _QUERY_WORDS):
         return result
     if reason in ("plausibility", "confusable_number") and _is_no(sig):
         return _rejected("cancelled")
     return _reask(pending, ctx)
+
+
+_PURANA = frozenset(fold(w) for w in "purana purane purani old existing".split())
+
+
+def _can_be_answer_name(r: _Name, sig: list[Tok], ctx: dict) -> bool:
+    """In an answer to the new-customer question only a stored name or a name directly before a particle is
+    another name (1.18); "haan bhai", "yeah open it" never rename the customer."""
+    if r.end < len(sig) and sig[r.end].kw in _MARKERS:
+        return True
+    return any(c["name"] == r.key or nm.same_person(c["name"], r.key) for c in _customers(ctx) or [])
 
 
 def _answer_kind(sig: list[Tok], customer: str | None) -> str | None:

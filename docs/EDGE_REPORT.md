@@ -2,7 +2,7 @@
 
 Written by `scripts/edge_report.py` from the tests in `server/tests/edge/`.
 
-262 cases: 237 pass, 0 fail, 25 manual, 0 without a test (770 tests run).
+280 cases: 255 pass, 0 fail, 25 manual, 0 without a test (944 tests run).
 
 ## A. Number parsing
 
@@ -375,6 +375,24 @@ Written by `scripts/edge_report.py` from the tests in `server/tests/edge/`.
 | Z26 | private mode in a chain | pass |  |
 | Z27 | wording with several entries pending | pass |  |
 | Z28 | single-entry regression guard | pass |  |
+| Z29 | cash purchase saves nothing | pass |  |
+| Z30 | past credit that came back | pass |  |
+| Z31 | udhaar given by the customer | pass |  |
+| Z32 | purchase, paid and the rest | pass |  |
+| Z33 | account words are not a direction | pass |  |
+| Z34 | stray words are not customers | pass |  |
+| Z35 | yes with an address word | pass |  |
+| Z36 | stored name plus an unknown word | pass |  |
+| Z37 | restated corrections | pass |  |
+| Z38 | not that entry | pass |  |
+| Z39 | dates and sath sau | pass |  |
+| Z40 | guards | pass |  |
+| Z41 | answers | pass |  |
+| Z42 | same name, three customers | pass |  |
+| Z43 | payment plus baaki chhod do | pass |  |
+| Z44 | English | pass |  |
+| Z45 | switch off, strict on | pass |  |
+| Z46 | typed sentence while a question is open | pass |  |
 
 ## Manual cases
 

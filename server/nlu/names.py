@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 
 from .lexicon import load
 from .numbers import parse_number
@@ -105,6 +106,7 @@ def name_key(text: str) -> str:
 _PHONETIC_DOUBLE = re.compile(r"([a-z])\1+")
 
 
+@lru_cache(maxsize=1 << 16)
 def phonetic_key(key: str) -> str:
     """Matching form of a key: ee/ii->i, oo/uu->u, aa->a, w->v, doubled letters collapsed; th/dh/sh kept."""
     if not isinstance(key, str):
@@ -119,6 +121,7 @@ def phonetic_key(key: str) -> str:
 _VOWELS = "aeiou"
 
 
+@lru_cache(maxsize=1 << 16)
 def _skeleton(word: str) -> tuple[str, str]:
     """(consonants in order, ending) of one phonetic word. y counts as a vowel; the ending is the final folded vowel
     or "C" for a consonant."""
@@ -128,6 +131,7 @@ def _skeleton(word: str) -> tuple[str, str]:
     return consonants, (last if last in _VOWELS else "C")
 
 
+@lru_cache(maxsize=1 << 16)
 def _name_fold(key: str) -> str:
     """Name-only folds (1.14, 1.16): th = t, x = ksh, a final y = i (Sunitha = Sunita, Laxmi = Lakshmi,
     Pinky = पिंकी)."""
@@ -139,6 +143,7 @@ def _name_fold(key: str) -> str:
     return " ".join(words)
 
 
+@lru_cache(maxsize=1 << 16)
 def same_person(a: str, b: str) -> bool:
     """Fuzzy name match (CONTRACT 1.12): equal phonetic keys, or the same number of words and, word by word, the
     same consonants in the same order and the same ending. rameysh = ramesh; sunit != sunita; rajan != ranjan."""
@@ -177,10 +182,39 @@ def _units(consonants: str) -> str:
     return consonants
 
 
+_CLUSTERS = re.compile(r"[aeiouy]+|[^aeiouy]+")
+
+
+def _clusters(word: str) -> list[str]:
+    """A folded word as alternating vowel and consonant clusters, digraphs as one consonant ("sh", "ch" ...)."""
+    return _CLUSTERS.findall(_units(word))
+
+
+def _close_word(a: str, b: str) -> bool:
+    ca, cb = _clusters(a), _clusters(b)
+    if ca == cb:
+        return False
+    if len(ca) == len(cb) + 1 and ca[:-1] == cb and ca[-1][0] in _VOWELS + "y":
+        return True  # only a final vowel differs ("kamala" / "kamal", "sunita" / "sunit")
+    if len(cb) == len(ca) + 1 and cb[:-1] == ca and cb[-1][0] in _VOWELS + "y":
+        return True
+    if len(ca) != len(cb):
+        return False
+    diffs = [(x, y) for x, y in zip(ca, cb) if x != y]
+    if len(diffs) != 1:
+        return False
+    x, y = diffs[0]
+    if x[0] in _VOWELS + "y" or y[0] in _VOWELS + "y":
+        return False  # a vowel differs: not close
+    return _edit1(x, y)  # one consonant differs or is missing; the vowels are the same in the same places
+
+
+@lru_cache(maxsize=1 << 16)
 def close_name(spoken: str, stored: str) -> bool:
-    """Not the same person, but close enough to ask about (1.14 E05): one consonant differs or is missing
-    ("rakes" / "rakesh", "ramesh" / "rakesh"), or the spoken word is the end of the stored name and has three
-    letters or more ("esh" for "ramesh")."""
+    """Not the same person, but close enough to ask about (1.14 E05, 1.18): one consonant differs and nothing else
+    (after the 1.12 folding the vowels are the same in the same places), or only a final vowel differs
+    ("jamesh" / "ramesh", "rakes" / "rakesh", "kamala" / "kamal"; "mohan" / "imran" are not close). Also the
+    spoken word as the end of the stored name with three letters or more ("esh" for "ramesh")."""
     if not spoken or not stored or same_person(spoken, stored):
         return False
     pa = _name_fold(spoken)
@@ -194,12 +228,7 @@ def close_name(spoken: str, stored: str) -> bool:
     for x, y in zip(wa, wb):
         if x == y:
             continue
-        cx, ex = _skeleton(x)
-        cy, ey = _skeleton(y)
-        cx, cy = _units(cx), _units(cy)  # "sh", "ch", "th" ... count as one consonant
-        if ex == ey and _edit1(cx, cy):
-            diffs += 1
-        elif cx == cy and _edit1(x, y):
+        if _close_word(x, y):
             diffs += 1
         else:
             return False

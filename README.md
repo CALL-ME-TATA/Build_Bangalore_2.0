@@ -100,12 +100,22 @@ or "nahi" settles it. Nothing is saved while a question is open.
 - **One question per entry.** In a sentence with several entries each doubtful entry gets its own question, with
   its own customer and amount ("Mohan ke sirf ₹140 baaki hain. ₹200 hi likhun?"). One yes never covers a second
   doubtful entry, and an instruction such as "baaki maaf kar do" stays with the customer it was said about.
+- **Cash on the spot is not udhaar.** "Ramesh ne 200 ka saaman liya paise de diye" is a cash sale and is refused.
+  "Ramesh ke naam 200 jama karo" is a payment, because a payment word decides the direction, not "ke naam".
+  "500 ka saaman liya, 200 diye, baaki udhaar" is asked as one credit of ₹300.
+- **A stray word never becomes a customer.** A new name is taken only where a name can stand: before "ne", "ko"
+  or "ka", or at the start before the amount. "Haan bhai" to "Khata banaun?" is a yes, not a customer called
+  Bhai. When a close existing name is offered ("Rames naya grahak hai, ya Ramesh?") a bare yes is not an answer.
+- **In noise it asks first.** Every spoken turn is measured, and a very noisy one is read back and saved only after
+  a yes (see Noise handling below).
 - **No double saves.** Each turn carries an id; if the page retries a turn, the server returns the first result and
   saves nothing twice.
 
-The rules are CONTRACT sections 1.14 to 1.17, 2.1, 3.3 and 5.1 in [docs/CONTRACT.md](docs/CONTRACT.md), written against
+The rules are CONTRACT sections 1.14 to 1.18, 2.1, 3.3 to 3.5 and 5.1 in [docs/CONTRACT.md](docs/CONTRACT.md), written against
 the edge-case list in [docs/EDGE_CASES.md](docs/EDGE_CASES.md) and the findings of two further reviews. Results: [docs/EDGE_REPORT.md](docs/EDGE_REPORT.md)
 (per case) and [docs/SCOREBOARD.md](docs/SCOREBOARD.md) (parser accuracy over the golden cases).
+[docs/FIX_LOG.md](docs/FIX_LOG.md) lists every sentence that was found to fail, round by round, with what the app
+did then, what it does now and the rule that fixed it; `python scripts/fix_log_replay.py` replays them.
 
 ## Architecture
 
@@ -185,25 +195,56 @@ The target is a first reply within 2 s of the end of speech. In the 120-turn rep
 0.27 s and the 95th percentile at most 0.37 s on the clips where speech ran right up to the release. These figures
 are from recorded speech on a laptop; see Limitations for what has not been measured.
 
-## Noise test
+## Noise handling and noise test
 
-Twelve sentences (four customers; amounts from 125 to 2,500 with fractions, a code-mixed and an English sentence) were
-synthesised with Timbre v3.0 and replayed through the live pipeline with `scripts/replay_audio.py`: clean, and mixed
-with white, pink and babble noise at 20, 10 and 5 dB signal-to-noise ratio. 120 turns in all.
+Steady noise does little harm to the speech service; other voices do, because it transcribes them too ("Ramesh ka
+teen sau chalis udhaar, Mohan ka?"). The server therefore does three things with every spoken turn
+(`server/app/audio.py`, contract section 3.5):
 
-| Condition | Saved correctly | Asked a question | Saved wrongly |
-|---|---|---|---|
-| Clean | 11 | 1 | 0 |
-| White noise, 20 / 10 / 5 dB | 12 / 11 / 11 | 0 / 1 / 1 | 0 |
-| Pink noise, 20 / 10 / 5 dB | 10 / 11 / 11 | 2 / 1 / 1 | 0 |
-| Babble (other voices), 20 / 10 / 5 dB | 8 / 9 / 2 | 4 / 3 / 10 | 0 |
-| All 120 turns | 96 | 24 | 0 |
+- **It measures the turn.** Frame by frame it follows the speaker's level and the background level and reports how
+  far apart they are. A speaker who starts talking as they press is not counted as background.
+- **It turns the background down.** Audio before the speaker starts and after they stop is sent to the speech
+  service 12 dB quieter. It is never removed, so a wrong decision makes a word quieter and cannot delete it, and
+  when speaker and background are too close to tell apart nothing is turned down at all.
+- **It asks first when it is very noisy.** When the speaker is less than 14 dB above the background, an entry that
+  would have been saved is read back instead ("Ramesh ke ₹340 udhaar likhun?") and saved only after a yes. The page
+  shows "Shor zyada hai" beside that turn and the measured figure in the latency panel.
 
-Every entry that was saved had the right customer, amount and direction. When the noise hid part of the sentence the
-app asked ("Kitne rupaye?", "Ramesh ne diye, ya Ramesh ko udhaar?") instead of guessing; five of the questions were
-the "₹2,500, pakka?" check for an amount far above that customer's usual. Babble at 5 dB (other voices almost as loud
-as the speaker) is where recognition breaks down: ten of twelve turns asked. The voice is synthetic and the noise is
-generated, so this shows how the pipeline fails, not how real shop noise sounds.
+Switches: `NOISE_TRIM`, `NOISE_TRIM_DB`, `NOISE_CONFIRM_DB` (see Configuration).
+
+**Measured.** Twelve sentences (four customers; amounts from 125 to 2,500 with fractions, a code-mixed and an English
+sentence) were synthesised with Timbre v3.0 and replayed through the live pipeline with `scripts/replay_audio.py`:
+clean, and mixed with white, pink and babble noise at 20, 10 and 5 dB signal-to-noise ratio, 120 turns in all. The
+120 turns were run twice on the same build: with noise handling switched off, and with it on.
+
+| Condition | Off: saved correctly / asked | On: saved correctly / asked with the right entry read back / asked something else |
+|---|---|---|
+| Clean | 11 / 1 | 11 / 0 / 1 |
+| White noise, 20 dB | 12 / 0 | 12 / 0 / 0 |
+| White noise, 10 dB | 11 / 1 | 10 / 1 / 1 |
+| White noise, 5 dB | 11 / 1 | 0 / 11 / 1 |
+| Pink noise, 20 dB | 10 / 2 | 10 / 0 / 2 |
+| Pink noise, 10 dB | 11 / 1 | 10 / 1 / 1 |
+| Pink noise, 5 dB | 11 / 1 | 1 / 10 / 1 |
+| Babble (other voices), 20 dB | 9 / 3 | 9 / 0 / 3 |
+| Babble, 10 dB | 9 / 3 | 10 / 0 / 2 |
+| Babble, 5 dB | 2 / 9, 1 refused | 0 / 2 / 9, 1 refused |
+| All 120 turns | 97 / 22, 1 refused | 73 / 25 / 21, 1 refused |
+
+No turn saved a wrong entry in either run. What the table shows:
+
+- With noise handling on, very loud noise no longer ends in a direct save. At 5 dB of steady noise the app read the
+  entry back in 21 of 24 turns, each time with the right customer, amount and direction, and waited for a yes. That
+  costs one "haan" in a very loud room, and a misheard entry can no longer go in unseen there.
+- Turning the background down changed little in what was saved: 10 of 12 against 9 at 10 dB of babble, and no change
+  at 20 dB. That is inside the run-to-run variation of the speech service.
+- Babble at 5 dB (other voices almost as loud as the speaker) is where recognition breaks down. Nothing is saved
+  there without a question, with noise handling on or off.
+- Some questions are not about noise: the one question in the clean run is "₹2,500, pakka?", asked because that
+  amount is far above that customer's usual.
+
+The voice is synthetic and the noise is generated, so this shows how the pipeline fails, not how real shop noise
+sounds. The thresholds were chosen on these clips and have not been tried on a phone in a real shop.
 
 ## Quick start
 
@@ -267,15 +308,15 @@ uses real credits.
 
 ## Tests
 
-Counts from a run on 2026-11-21 at 20:21 IST:
+Counts from a run on 2026-11-21 at 21:28 IST:
 
 | Suite | Tests |
 |---|---|
-| Parser and golden cases (`server/tests/nlu`, number round trips, fractions, oracle, `test_golden.py`) | 4,577 |
-| Server (`server/tests/app`) | 223 |
-| Edge cases (`server/tests/edge`): 237 of 262 cases (the list in docs/EDGE_CASES.md plus the review and unlisted-sentence groups), 25 left as manual checks | 770 |
-| End-to-end and scoreboard (`server/tests/e2e`, `test_scoreboard.py`) | 103 |
-| Web app (`frontend/`, `npm test`) | 270 |
+| Parser and golden cases (`server/tests/nlu`, number round trips, fractions, oracle, `test_golden.py`) | 4,855 |
+| Server (`server/tests/app`) | 287 |
+| Edge cases (`server/tests/edge`): 255 of 280 cases (the list in docs/EDGE_CASES.md plus the review and unlisted-sentence groups), 25 left as manual checks | 944 |
+| End-to-end and scoreboard (`server/tests/e2e`, `test_scoreboard.py`) | 108 |
+| Web app (`frontend/`, `npm test`) | 288 |
 
 From `server/` (use `../.venv/Scripts/python` on Windows or `../.venv/bin/python` elsewhere):
 
@@ -331,6 +372,9 @@ Environment variables, read from `.env` or the shell. Defaults are in `server/ap
 | `CONFIRM_NEW_CUSTOMER` | `1` | Ask before opening an account for an unknown name |
 | `STRICT_SAVE` | `1` | Ask before saving a sentence that contains a word the parser does not know |
 | `MAX_AMOUNT` | `9999999` | Amounts above this are refused |
+| `NOISE_TRIM` | `1` | Turn audio outside the speaker's own burst down by 12 dB before it goes to the speech service |
+| `NOISE_TRIM_DB` | `16` | Below this distance between speaker and background nothing is turned down |
+| `NOISE_CONFIRM_DB` | `14` | Below this distance a save is read back and confirmed first; `0` switches that off |
 | `TTS_PREWARM` | `1` | Synthesise the fixed replies at start-up |
 | `WEB_DIR` | unset | Folder served as the web app (default `frontend/dist` if built, else `web/`) |
 | `ADMIN_TOKEN` | unset | Enables `POST /api/admin/purge` (header `X-Admin-Token`) |
@@ -359,8 +403,8 @@ docs/                CONTRACT.md, ARCHITECTURE.md, TESTING.md, DEMO_SCRIPT.md, E
 - Speech needs a connection. The khata view is cached and typed sentences are queued while offline, but speaking
   does not work offline.
 - Not measured with real voices in real noise, nor with accents, whispering or shouting. The noise test above uses a
-  synthetic voice and generated noise. `scripts/replay_audio.py` can run real recordings through the server; that
-  has not been done.
+  synthetic voice and generated noise, and the noise thresholds were chosen on it. `scripts/replay_audio.py` can
+  run real recordings through the server; that has not been done.
 - The new web app's microphone handling has not yet been verified on a low-end phone.
 - Gnani returns no confidence score, so a number heard as another valid number is caught only by the spoken readback
   and "nahi".

@@ -38,7 +38,7 @@ def count_events(ledger) -> int:
 
 # ---- 1. named missing-amount and plausibility questions ---------------------------------------------------------
 def test_missing_amount_names_the_customer_when_several_entries_are_pending():
-    events = [_ev("credit", "ramesh", 200, TODAY), {"kind": "writeoff", "customer": "mohan", "date": TODAY.isoformat()}]
+    events = [_ev("credit", "ramesh", 200, TODAY), {"kind": "payment", "customer": "mohan", "date": TODAY.isoformat()}]
     q = ask("missing_amount", events, index=1)
     assert R.clarification(q).text == "Mohan ke kitne rupaye?"
     assert EN.clarification(q).text == "How many rupees for Mohan?"

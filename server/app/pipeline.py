@@ -200,6 +200,7 @@ class Pipeline:
         self._tz = ZoneInfo(settings.shop_tz)
         self._now = now or (lambda: datetime.now(self._tz))
         self._fixed = {lang: {r.speak for r in fixed_replies(self.replies.with_lang(lang))} for lang in ("hi", "en")}
+        self._noisy = False  # the turn in progress was a noisy spoken turn (3.5); reset by every `_run`
 
     def now(self) -> datetime:
         """The server clock in SHOP_TZ: every ledger `ts` and the shop day come from it (C05, C06)."""
@@ -299,8 +300,11 @@ class Pipeline:
             if (now - state.pending_at).total_seconds() > PENDING_TTL_S:
                 state.clear_pending()
 
-    def build_ctx(self, state: SessionState, now: datetime) -> dict:
-        ctx: dict[str, Any] = {"customers": self.ledger.customers_for_parser(), "limits": self.limits(),
+    def build_ctx(self, state: SessionState, now: datetime, noisy: bool = False) -> dict:
+        limits = self.limits()
+        if noisy:
+            limits["noisy"] = True  # this spoken turn could not be told apart from the background (3.5)
+        ctx: dict[str, Any] = {"customers": self.ledger.customers_for_parser(), "limits": limits,
                                "confusables": self.ledger.confusables()}
         last = self.ledger.last_active_event(state.session_id, now)
         if last:
@@ -317,12 +321,13 @@ class Pipeline:
 
     # ---- one turn ---------------------------------------------------------------------------------------------
     def run_turn(self, state: SessionState, transcript: str, *, trace_id: str | None = None,
-                 utt_id: str | None = None, device_ts: str | None = None) -> TurnResult:
+                 utt_id: str | None = None, device_ts: str | None = None, noisy: bool = False) -> TurnResult:
         """Parse and apply one utterance. Never raises: a failure becomes the rejected reply with nothing saved."""
         trace_id = trace_id or uuid.uuid4().hex[:16]
         client_id = clean_utt_id(utt_id)
         utterance_id = client_id or uuid.uuid4().hex[:12]
         device_ts = clean_device_ts(device_ts)
+        self._noisy = bool(noisy)  # per turn: typed turns and replays never set it
         fingerprint = text_fingerprint(transcript, state.session_id)
         self._use_lang(state)
         try:
@@ -330,7 +335,7 @@ class Pipeline:
                 prior = self.ledger.find_utterance(client_id)
                 if prior is not None:
                     return self._repeat(state, prior, fingerprint, trace_id, utterance_id)
-            return self._run(state, transcript, trace_id, utterance_id, device_ts)
+            return self._run(state, transcript, trace_id, utterance_id, device_ts, noisy)
         except DuplicateUtterance as dup:
             return self._repeat(state, dup.record, fingerprint, trace_id, utterance_id)
         except Exception as exc:
@@ -422,12 +427,12 @@ class Pipeline:
         state.last_turn = lt
 
     def _run(self, state: SessionState, transcript: str, trace_id: str, utterance_id: str,
-             device_ts: str | None) -> TurnResult:
+             device_ts: str | None, noisy: bool = False) -> TurnResult:
         now = self.now()
         today = now.date()
         timings: dict[str, float] = {}
 
-        ctx = self.build_ctx(state, now)
+        ctx = self.build_ctx(state, now, noisy)
         asked = state.pending
         t0 = time.perf_counter()
         result = self.parse(transcript, today=today, ctx=ctx)
@@ -526,7 +531,9 @@ class Pipeline:
         if ctype == "writeoff":
             events = [e for e in ((result.get("pending") or {}).get("events") or []) if isinstance(e, dict)]
             ev = Replier.target_event(result, events) or {}
-            return not (isinstance(ev.get("amount"), int) and ev["amount"] != confirm.get("balance"))
+            amount, balance = ev.get("amount"), confirm.get("balance")
+            # An explicit amount below the balance names only that amount; above it the balance is said (1.18).
+            return not (isinstance(amount, int) and isinstance(balance, int) and amount < balance)
         return True
 
     @staticmethod
@@ -543,7 +550,8 @@ class Pipeline:
             self.ledger.record_utterance(turn.utterance_id, state.session_id, self.now(), transcript=transcript,
                                          status=turn.status, reply_text=turn.reply_text, timings=turn.timings,
                                          result=turn.record(plain), device_ts=device_ts,
-                                         fingerprint=text_fingerprint(transcript, state.session_id))
+                                         fingerprint=text_fingerprint(transcript, state.session_id),
+                                         noisy=self._noisy)
         except Exception as exc:
             # Nothing was saved by this turn; a failed log row must not change the reply.
             log.warning("could not record utterance: %s", type(exc).__name__)
@@ -603,7 +611,8 @@ class Pipeline:
                               lang=state.lang, balances=balances)
             holder["turn"], holder["outcome"] = turn, outcome
             return {"transcript": transcript, "status": status, "reply_text": shown.text, "timings": timings,
-                    "result": turn.record(reply), "fingerprint": text_fingerprint(transcript, state.session_id)}
+                    "result": turn.record(reply), "fingerprint": text_fingerprint(transcript, state.session_id),
+                    "noisy": self._noisy}
 
         self.ledger.apply(result, now=now, session_id=state.session_id, trace_id=trace_id,
                           utterance_id=utterance_id, finish=finish, device_ts=device_ts)

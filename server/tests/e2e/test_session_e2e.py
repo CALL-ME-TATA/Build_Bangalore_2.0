@@ -28,9 +28,15 @@ TIMING_KEYS = {"stt_final", "parse", "db", "tts_first_chunk", "end_to_first_audi
 
 
 def pcm_audio(ms: int = 800) -> bytes:
+    """Audio as the page sends it: 8 frames (256 ms) of near-silence before the press (the pre-roll), the tone as
+    speech, then 9 frames of near-silence (the tail). A recording under half a second is sent without padding."""
     n = SAMPLE_RATE * ms // 1000
-    return struct.pack(f"<{n}h", *[int(2000 * ((i // 40) % 2 * 2 - 1)) for i in range(n)])
-
+    tone = [int(2000 * ((i // 40) % 2 * 2 - 1)) for i in range(n)]
+    if ms < 500:
+        return struct.pack(f"<{n}h", *tone)
+    quiet = lambda frames: [20 if (i // 7) % 2 else -20 for i in range(512 * frames)]  # noqa: E731
+    samples = quiet(8) + tone + quiet(9)
+    return struct.pack(f"<{len(samples)}h", *samples)
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def stack():
@@ -130,10 +136,10 @@ class Client:
         self.session_id = ready["session_id"]
         return turn
 
-    async def speak(self, transcript, **script):
+    async def speak(self, transcript, audio=None, **script):
         await self.script(transcripts=[transcript], **script)
         await self.ws.send(json.dumps({"type": "start", "mode": "ptt"}))
-        audio = pcm_audio()
+        audio = audio or pcm_audio()
         for i in range(0, len(audio), CHUNK_BYTES):
             await self.ws.send(audio[i:i + CHUNK_BYTES])
             await asyncio.sleep(0.01)  # audio arrives at roughly real-time cadence, as from a browser
@@ -480,6 +486,9 @@ async def test_old_amount_correction_picks_the_right_entry(greeted, stack):
 
 async def test_english_sentence_gets_english_reply_and_hinglish_switches_back(greeted, stack):
     c = greeted
+    # CONTRACT 1.18: with CONFIRM_NEW_CUSTOMER off a new name is accepted only before a particle, so the customer is
+    # opened by a Hindi sentence first.
+    await c.speak("lakshmi ka 700 udhaar")
     en = await c.speak("Lakshmi paid five hundred rupees")
     assert en["result"]["status"] == "ok" and en["result"]["lang"] == "en"
     assert en["result"]["entries"][0]["kind"] == "payment" and en["result"]["entries"][0]["amount"] == 500
@@ -519,7 +528,7 @@ async def test_relation_is_not_answered_with_the_customers_own_balance(greeted, 
 
 async def test_natural_answer_resolves_the_direction_question(greeted, stack):
     c = greeted
-    q = await c.speak("ganesh 500")
+    q = await c.speak("ganesh ka 500")  # CONTRACT 1.18: with the switch off a new name is accepted only before a particle
     assert q["result"]["status"] == "needs_clarification" and q["result"]["reason"] == "ambiguous_direction"
     assert q["result"]["entries"] == []
     ans = await c.speak("ganesh ne diye")
@@ -528,3 +537,81 @@ async def test_natural_answer_resolves_the_direction_question(greeted, stack):
     assert entry["kind"] == "payment" and entry["amount"] == 500
     customers, _ = await ledger(stack)
     assert balance_of(customers, "ganesh") == [-500]
+
+
+# ---- noise handling (CONTRACT 3.5) ----------------------------------------------------------------------------
+
+def noisy_audio(ms: int = 1600) -> bytes:
+    """Loud steady background from the first frame to the last, with the "speech" only a little above it."""
+    import random
+
+    rng = random.Random(7)
+    n = SAMPLE_RATE * ms // 1000
+    samples = [int(rng.uniform(-1500, 1500)) + (int(2000 * ((i // 40) % 2 * 2 - 1)) if n // 4 < i < 3 * n // 4 else 0)
+               for i in range(n)]
+    return struct.pack(f"<{n}h", *samples)
+
+
+def noise_of(turn):
+    timing = turn["timing"]
+    return (timing.get("ms") or {}).get("noise") or timing.get("noise")
+
+
+async def test_a_clean_spoken_turn_saves_directly_and_reports_the_noise_measure(greeted, stack):
+    turn = await greeted.speak("yashodhara ka 265 udhaar")
+    assert turn["result"]["status"] == "ok" and turn["result"]["entries"][0]["amount"] == 265
+    noise = noise_of(turn)
+    assert noise and noise["noisy"] is False, noise
+    customers, _ = await ledger(stack)
+    assert balance_of(customers, "yashodhara") == [265]
+
+
+async def test_a_noisy_turn_is_confirmed_first_and_a_spoken_yes_saves(greeted, stack):
+    turn = await greeted.speak("zubaida ka 215 udhaar", audio=noisy_audio())
+    assert noise_of(turn)["noisy"] is True, noise_of(turn)
+    result = turn["result"]
+    assert result["status"] == "needs_clarification" and result["reason"] == "confirm_entry", result
+    assert result["entries"] == [] and "215" in result["reply_text"]
+    customers, _ = await ledger(stack)
+    assert balance_of(customers, "zubaida") == []
+    done = await greeted.speak("haan")
+    assert done["result"]["status"] == "ok" and done["result"]["entries"][0]["amount"] == 215
+    customers, _ = await ledger(stack)
+    assert balance_of(customers, "zubaida") == [215]
+
+
+async def test_a_noisy_turn_is_confirmed_first_and_a_typed_yes_saves(greeted, stack):
+    turn = await greeted.speak("wazir ka 225 udhaar", audio=noisy_audio())
+    assert turn["result"]["reason"] == "confirm_entry"
+    await greeted.ws.send(json.dumps({"type": "text", "text": "haan"}))
+    done = await greeted.collect_turn()
+    assert done["result"]["status"] == "ok" and done["result"]["entries"][0]["amount"] == 225
+    assert noise_of(done) is None, "a typed turn has no noise measure"
+
+
+async def test_a_typed_turn_has_no_noise_in_timing(greeted):
+    await greeted.ws.send(json.dumps({"type": "text", "text": "tabassum ka 120 udhaar"}))
+    turn = await greeted.collect_turn()
+    assert turn["result"]["status"] == "ok" and noise_of(turn) is None
+
+
+async def test_with_the_confirmation_switched_off_a_noisy_turn_saves_directly(stack):
+    from app.config import Settings
+
+    main = importlib.import_module("app.main")
+    with tempfile.TemporaryDirectory() as tmp:
+        settings = Settings.from_env({
+            "GNANI_BASE_URL": stack["mock_url"], "GNANI_API_KEY": "test-key",
+            "LEDGER_DB": os.path.join(tmp, "khata.db"), "LEDGER_KEY": base64.b64encode(b"n" * 32).decode(),
+            "CONFIRM_NEW_CUSTOMER": "0", "NOISE_CONFIRM_DB": "0",
+        })
+        app_url, stop_app = await serve_app(main.create_app(settings), lifespan="auto")
+        own = dict(stack, app_url=app_url)
+        c = await Client.open(own)
+        try:
+            await c.greet()
+            turn = await c.speak("ishaan ka 180 udhaar", audio=noisy_audio())
+            assert turn["result"]["status"] == "ok" and turn["result"]["entries"][0]["amount"] == 180, turn["result"]
+        finally:
+            await c.close()
+            await stop_app()

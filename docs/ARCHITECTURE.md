@@ -2,7 +2,7 @@
 
 KhataVaani is a voice ledger for kirana udhaar. The shopkeeper holds one button, speaks a sentence such as
 "Ramesh ka 340 udhaar, kal 200 diya tha", and hears a short confirmation. Interfaces are fixed in docs/CONTRACT.md
-(version 1.5). The edge cases the rules were written against are in docs/EDGE_CASES.md.
+(version 1.7). The edge cases the rules were written against are in docs/EDGE_CASES.md.
 
 ## What the judges score, and where the design answers it
 
@@ -69,7 +69,7 @@ flowchart LR
 6. Speak: audio chunks stream straight to the browser, which starts playing at the first chunk. A `timing` message
    reports each hop.
 
-## Pieces added in contract 1.2 to 1.5
+## Pieces added in contract 1.2 to 1.7
 
 - **Strict-mode gate.** The parser's last step. When an append or amend would be saved and the sentence holds a word
   outside the parser's vocabulary, the result becomes a `confirm_entry` question of type `unsure`. Every other rule
@@ -90,6 +90,15 @@ flowchart LR
 - **One question per entry (1.5).** With several entries pending, every question carries the index of the entry it
   is about and names that entry's customer. Amount checks and over-payment checks run per entry, and the entries
   are saved only when no entry is left to confirm.
+- **Fourth-review rules (1.6).** A purchase paid on the spot is refused as a cash sale. Words that name the account
+  ("ke naam", "ke khate mein") do not decide the direction. A word becomes a new customer only where a name can
+  stand. A correction said as a restatement is confirmed, never added. The page's queue of typed sentences waits
+  while any question is open.
+- **Noise handling (1.7).** `server/app/audio.py` measures each spoken turn frame by frame. On the way to the
+  speech service it turns audio outside the speaker's own burst down by 12 dB; the stream runs 8 frames behind
+  and is flushed at the end of the turn, so the reply is not delayed. A turn whose speaker is less than 14 dB
+  above the background reaches the parser with `limits.noisy`, and a save is then confirmed first. `timing`
+  carries the measurement and the page shows it.
 - **Idempotency.** A turn's `utt_id` becomes the utterance id and is written in the same transaction as its events. A
   repeated `utt_id` writes nothing and returns the first result with `duplicate: true`.
 - **Write-offs.** Stored as a payment with `adjustment='writeoff'`, so the balance arithmetic is unchanged; they are

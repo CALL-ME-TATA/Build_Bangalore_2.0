@@ -151,12 +151,15 @@ def test_Z07_purchase_minus_payment_is_confirmed_as_the_difference(shop):
     assert shop.balance("ramesh") <= 540 + 40
 
 
-@pytest.mark.parametrize("text", ["Ramesh ne 500 ka saaman liya aur payment kar diya",
-                                  "Ramesh ko 500 udhaar diya tha wo aa gaya"])
-def test_Z07_a_credit_followed_by_a_payment_cue_is_never_saved_as_the_credit(shop, text):
+def test_Z07_a_past_credit_that_came_back_is_never_saved_as_the_credit(shop):
     roster(shop)
-    t = shop.say(text)
-    expect_ask(t, "ambiguous_direction")
+    expect_ask(shop.say("Ramesh ko 500 udhaar diya tha wo aa gaya"), "ambiguous_direction")
+
+
+def test_Z07_a_purchase_paid_for_on_the_spot_is_refused(shop):
+    """CONTRACT 1.18 overrides 1.16 here: `payment kar diya` after a purchase is cash handed over, a cash sale."""
+    roster(shop)
+    expect_reject(shop.say("Ramesh ne 500 ka saaman liya aur payment kar diya"), "out_of_scope")
 
 
 # ---- Z08 ---------------------------------------------------------------------------------------------------------

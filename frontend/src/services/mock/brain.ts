@@ -118,6 +118,8 @@ export class MockBrain {
   private lastSaved: Entry[] = [];
   lang: Lang = 'hi';
   privateMode = false;
+  /** The current spoken turn was noisy (contract 3.5): a save is confirmed first. */
+  noisy = false;
 
   constructor(private ledger: MockLedger) {}
 
@@ -214,6 +216,14 @@ export class MockBrain {
     if (amount >= 100000) {
       this.pending = { reason: 'plausibility', name, kind, amount };
       return this.question('plausibility', this.en(`₹${fmt(amount)}, are you sure?`, `₹${fmt(amount)}, pakka?`));
+    }
+    if (this.noisy) {
+      this.pending = { reason: 'confirm_entry', name, kind, amount };
+      const q =
+        kind === 'credit'
+          ? this.en(`Add ₹${fmt(amount)} credit for ${name}?`, `${name} ke ₹${fmt(amount)} udhaar likhun?`)
+          : this.en(`Record ₹${fmt(amount)} received from ${name}?`, `${name} se ₹${fmt(amount)} jama likhun?`);
+      return this.question('confirm_entry', q, { confirm: { type: 'unsure', words: [], noise: true } });
     }
     if (this.ledger.isNew(name)) {
       const close = this.ledger.customerSummaries().customers.find((c) => distance(c.display, name) <= 2);
@@ -419,6 +429,7 @@ export const VOICE_SCRIPT: Record<Lang, string[]> = {
     'Geeta ka teen sau chaalis udhaar',
     'Ramesh ka total kitna hai',
     'Sunita ne 150 diye',
+    'Imran ka 60 udhaar, Mohan ka?',
   ],
   en: [
     'Ramesh 340 credit',
@@ -428,8 +439,14 @@ export const VOICE_SCRIPT: Record<Lang, string[]> = {
     'Geeta teen sau chaalis credit',
     'How much does Ramesh owe, total',
     'Sunita paid 150',
+    'Imran 60 credit, and Mohan?',
   ],
 };
+
+/** The scripted noisy turn: a second voice heard after the sentence ("…, Mohan ka?"). */
+export function soundsNoisy(heard: string): boolean {
+  return /,\s*(and\s+)?\w+( ka)?\?$/i.test(heard.trim());
+}
 
 /** The spoken answer the mock "hears" while a question is open. */
 export function scriptedAnswer(reason: string | null, lang: Lang): string | null {

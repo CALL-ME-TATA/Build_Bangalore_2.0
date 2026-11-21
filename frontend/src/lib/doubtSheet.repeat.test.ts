@@ -76,3 +76,9 @@ describe('amend and review confirmations', () => {
     expect(longQuestion({ question: '340 ya 740?', confirm: null })).toBe(false);
   });
 });
+
+test('a spoken "Theek hai, entry nahi ki." (the answer Nahi) closes the sheet; the silent cancel does not', () => {
+  const s = open();
+  expect(sheetReduce(s, ev({ turnId: 2, status: 'rejected', reason: 'cancelled', replyText: '' }))).toBe(s);
+  expect(sheetReduce(s, ev({ turnId: 2, status: 'rejected', reason: 'cancelled', replyText: 'Theek hai, entry nahi ki.' })).stage).toBe('closed');
+});

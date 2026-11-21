@@ -51,6 +51,7 @@ export interface Confirm {
     | 'reminder'
     | 'review'
     | 'amend'
+    | 'unsure'
     | string;
   balance?: number;
   bill?: number;
@@ -60,6 +61,9 @@ export interface Confirm {
   /** `amend`: the amount being replaced and the new one. */
   old?: number;
   new?: number;
+  /** `unsure`: words the parser did not know, and whether the turn was noisy (contract 3.5). */
+  words?: string[];
+  noise?: boolean;
 }
 
 /** What a query turn asked (contract 3.3), so the page can show more than was spoken. */
@@ -114,11 +118,18 @@ export type ServerMessage =
   | ResultMessage
   | { type: 'audio_start'; turn_id: number; sample_rate: number; encoding?: string; channels?: number }
   | { type: 'audio_end'; turn_id: number; cancelled?: boolean }
-  | { type: 'timing'; turn_id: number; trace_id?: string; ms: Partial<Record<TimingKey, number>> }
+  | { type: 'timing'; turn_id: number; trace_id?: string; ms: Partial<Record<TimingKey, number>>; noise?: NoiseInfo }
   | { type: 'error'; turn_id?: number; code?: string; message?: string }
   | { type: 'pong'; t?: number }
   /** Acknowledges a `settings` message (contract 3.3). */
   | { type: 'settings'; private?: boolean };
+
+/** How well the speaker stood out from the background in a spoken turn (contract 3.5). Absent for typed turns. */
+export interface NoiseInfo {
+  separation_db: number;
+  noisy: boolean;
+  turned_down_ms?: number;
+}
 
 export type TimingKey =
   | 'stt_final'

@@ -109,3 +109,83 @@ test('one at a time, in order; a question holds the rest until it is answered', 
   expect(saved.some((e) => e.customer.display === 'Sunita' && e.amount === 150 && e.kind === 'payment')).toBe(true);
   expect(outbox()).toHaveLength(0);
 });
+
+test('a question raised by a LIVE turn holds the queue; it resumes after the answer', async () => {
+  // Live (connected) sentence that asks a question.
+  S.session.sendText('Mohan ka 5 lakh udhaar');
+  await settle();
+  expect(S.useSession.getState().result).toMatchObject({ status: 'needs_clarification', reason: 'plausibility' });
+  // A sentence typed while disconnected must not go out while that question is open.
+  disconnect();
+  S.session.sendText('Sunita ne 120 diye');
+  await settle(50);
+  reconnect();
+  await settle(15000);
+  expect(outbox().map((r) => r.text)).toEqual(['Sunita ne 120 diye']);
+  expect(S.useSession.getState().saved.some((e) => e.customer.display === 'Sunita' && e.amount === 120)).toBe(false);
+  // The live answer closes it; then the queue carries on.
+  S.session.sendText('haan');
+  await settle();
+  await settle();
+  expect(S.useSession.getState().saved.some((e) => e.customer.display === 'Mohan' && e.amount === 500000)).toBe(true);
+  expect(S.useSession.getState().saved.some((e) => e.customer.display === 'Sunita' && e.amount === 120)).toBe(true);
+  expect(outbox()).toHaveLength(0);
+});
+
+test('the queue resumes after the question is cancelled ("Nahi")', async () => {
+  S.session.sendText('Mohan ka 7 lakh udhaar');
+  await settle();
+  disconnect();
+  S.session.sendText('Sunita ne 130 diye');
+  await settle(50);
+  reconnect();
+  await settle(10000);
+  expect(outbox()).toHaveLength(1);
+  S.session.sendText('nahi');
+  await settle();
+  await settle();
+  expect(S.useSession.getState().saved.some((e) => e.amount === 700000)).toBe(false);
+  expect(S.useSession.getState().saved.some((e) => e.customer.display === 'Sunita' && e.amount === 130)).toBe(true);
+  expect(outbox()).toHaveLength(0);
+});
+
+test('the queue resumes when the question expires (60 s), and the sentence is not taken as the answer', async () => {
+  S.session.sendText('Mohan ka 9 lakh udhaar');
+  await settle();
+  disconnect();
+  S.session.sendText('Sunita ne 140 diye');
+  await settle(50);
+  reconnect();
+  await settle(30000);
+  expect(outbox()).toHaveLength(1);
+  await settle(40000); // past the 60 s expiry
+  await settle();
+  expect(outbox()).toHaveLength(0);
+  const saved = S.useSession.getState().saved;
+  expect(saved.some((e) => e.amount === 900000)).toBe(false);
+  expect(saved.some((e) => e.customer.display === 'Sunita' && e.amount === 140)).toBe(true);
+});
+
+test('a stuck sentence (its question is gone, the replay comes back cancelled) is sent once under a new id', async () => {
+  // First send: a question; then it is cancelled, so that question is no longer the open one.
+  disconnect();
+  S.session.sendText('Geeta ka teen sau chaalis udhaar');
+  await settle(50);
+  const firstId = outbox()[0]?.uttId;
+  reconnect();
+  await settle();
+  expect(S.useSession.getState().result?.reason).toBe('confusable_number');
+  S.session.sendText('nahi');
+  await settle();
+  // As after a page reload where that result was lost: the same record is pending again, same utt_id.
+  O.useOffline.setState({
+    outbox: [{ id: 99, text: 'Geeta ka teen sau chaalis udhaar', createdAt: new Date().toISOString(), state: 'pending', reason: null, attempts: 1, uttId: firstId }],
+  });
+  S.useSession.getState().dispatch({ type: 'conn', status: 'open' });
+  await settle();
+  await settle();
+  // The replay got "Theek hai, entry nahi ki."; the renewed send (new id) reached the server and asked again.
+  expect(S.useSession.getState().result).toMatchObject({ status: 'needs_clarification', reason: 'confusable_number' });
+  expect(S.useSession.getState().result?.duplicate).toBe(false);
+  expect(outbox()).toHaveLength(0);
+});

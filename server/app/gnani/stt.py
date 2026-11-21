@@ -265,7 +265,10 @@ class SttClient:
         """Send the padded last frame and `commit`, wait per the rule in CONTRACT section 4, return the text."""
         try:
             result = await self._end_turn()
-            self._dirty = False
+            # Audio that produced no event yet, or an utterance still open, can still answer late (a speech_start
+            # or transcript after the next `start`). Such a turn leaves the socket dirty, so the next press gets a
+            # fresh one and those late events can never count for it (3.1).
+            self._dirty = bool(self._sent_frames) and (not self._heard or bool(self._open))
             return result
         finally:
             self._on_event = None

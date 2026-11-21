@@ -39,8 +39,15 @@ class LiveClock:
 
 
 def pcm_audio(ms: int = 800) -> bytes:
+    """Audio as the page sends it: 8 frames (256 ms) of near-silence before the press (the pre-roll), the tone as
+    speech, then 9 frames of near-silence (the tail). A recording under half a second is sent without padding."""
     n = SAMPLE_RATE * ms // 1000
-    return struct.pack(f"<{n}h", *[int(2000 * ((i // 40) % 2 * 2 - 1)) for i in range(n)])
+    tone = [int(2000 * ((i // 40) % 2 * 2 - 1)) for i in range(n)]
+    if ms < 500:
+        return struct.pack(f"<{n}h", *tone)
+    quiet = lambda frames: [20 if (i // 7) % 2 else -20 for i in range(512 * frames)]  # noqa: E731
+    samples = quiet(8) + tone + quiet(9)
+    return struct.pack(f"<{len(samples)}h", *samples)
 
 
 class Collected(dict):

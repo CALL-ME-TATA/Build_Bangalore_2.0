@@ -26,6 +26,7 @@ import type {
   ConnStatus,
   Entry,
   MicStatus,
+  NoiseInfo,
   QueryInfo,
   ResultMessage,
   ResultStatus,
@@ -53,6 +54,23 @@ export interface TurnResult {
 export interface Timing {
   traceId: string | null;
   ms: Partial<Record<TimingKey, number>>;
+  /** Spoken turns on servers with noise handling (contract 3.5); null for typed turns and older servers. */
+  noise: NoiseInfo | null;
+}
+
+/** The `timing.noise` object if it is well formed, else null (absent on typed turns and older servers). */
+export function parseNoise(n: unknown): NoiseInfo | null {
+  if (!n || typeof n !== 'object') return null;
+  const o = n as { separation_db?: unknown; noisy?: unknown; turned_down_ms?: unknown };
+  if (typeof o.separation_db !== 'number' || !Number.isFinite(o.separation_db) || typeof o.noisy !== 'boolean') return null;
+  const out: NoiseInfo = { separation_db: o.separation_db, noisy: o.noisy };
+  if (typeof o.turned_down_ms === 'number' && Number.isFinite(o.turned_down_ms)) out.turned_down_ms = o.turned_down_ms;
+  return out;
+}
+
+/** The noise measurement of a turn, or null. */
+export function turnNoise(turn: Pick<TurnRecord, 'timing'>): NoiseInfo | null {
+  return turn.timing?.noise ?? null;
 }
 
 /** One finished turn of the conversation. */
@@ -420,7 +438,7 @@ export function reduce(s: SessionState, m: SessionAction): SessionState {
       return !m.cancelled && !s.soundPlayed ? cueBeep(next) : next;
     }
     case 'timing':
-      return { ...s, timing: { traceId: m.trace_id || null, ms: m.ms || {} } };
+      return { ...s, timing: { traceId: m.trace_id || null, ms: m.ms || {}, noise: parseNoise(m.noise) } };
     case 'error': {
       const next = {
         ...s,
@@ -470,7 +488,7 @@ function compareEntries(a: Entry, b: Entry): number {
 /** Server and phone latency of the most recent turn that has either, with that turn's per-stage figures. */
 export function lastLatency(
   turns: TurnRecord[],
-): { server: number | null; phone: number | null; ms: Partial<Record<TimingKey, number>> } | null {
+): { server: number | null; phone: number | null; ms: Partial<Record<TimingKey, number>>; noise: NoiseInfo | null } | null {
   for (let i = turns.length - 1; i >= 0; i--) {
     const r = turns[i];
     if (!r) continue;
@@ -480,6 +498,7 @@ export function lastLatency(
         server: server != null ? Math.round(server) : null,
         phone: r.clientMs != null ? Math.round(r.clientMs) : null,
         ms: r.timing?.ms ?? {},
+        noise: r.timing?.noise ?? null,
       };
     }
   }

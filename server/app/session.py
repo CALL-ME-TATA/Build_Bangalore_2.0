@@ -20,8 +20,9 @@ from typing import Any, Callable
 from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect
 
+from .audio import TurnAudio
 from .config import Settings
-from .gnani.stt import SttClient
+from .gnani.stt import FRAME_BYTES, SttClient
 from .gnani.tts import TtsClient, TtsError
 from .ledger import Ledger
 from .logsafe import describe
@@ -57,6 +58,11 @@ class AppContext:
         return None
 
 
+def _noise_ms(noise: dict | None) -> dict:
+    """The `timing.noise` entry of a spoken turn (3.5); typed turns have none."""
+    return {"noise": noise} if noise else {}
+
+
 def _client_ts(data: dict) -> str | None:
     return clean_device_ts(data.get("client_ts"))
 
@@ -78,6 +84,9 @@ class Session:
         self._collecting = False
         self._audio_bytes = 0
         self._turn_utt: str | None = None  # client `utt_id` sent with `start`
+        # Noise handling (3.5): one TurnAudio per spoken turn, fed 1,024-byte frames; `_abuf` holds a partial frame.
+        self._turn_audio: TurnAudio | None = None
+        self._abuf = bytearray()
 
     @property
     def turn_id(self) -> int:
@@ -207,6 +216,7 @@ class Session:
             self._collecting = True
             self._audio_bytes = 0
             self._turn_utt = clean_utt_id(data.get("utt_id"))
+            self._new_turn_audio()  # the pre-roll frames the page sends first are its first frames
             self._ensure_stt()
             tid = state.turn_id
             await self._state_msg(tid, "listening")
@@ -225,10 +235,11 @@ class Session:
                 self._collecting = False
                 t_end = time.perf_counter()
                 device_ts = _client_ts(data)
+                noise = await self._close_turn_audio()  # the held frames go out before the commit
                 if self._audio_bytes < MIN_AUDIO_BYTES:
                     self._spawn(self._short_turn(self.turn_id))
                 else:
-                    self._spawn(self._audio_turn(self.turn_id, t_end, self._turn_utt, device_ts))
+                    self._spawn(self._audio_turn(self.turn_id, t_end, self._turn_utt, device_ts, noise))
         elif kind == "text":
             text = str(data.get("text") or "").strip()
             await self._interrupt()
@@ -250,6 +261,7 @@ class Session:
             recording = self._collecting
             await self._interrupt()
             self._collecting = False
+            self._discard_turn_audio()
             if recording:
                 # An accidental press: the open recording ends like one shorter than half a second.
                 self._spawn(self._short_turn(self.turn_id, "cancelled"))
@@ -308,10 +320,50 @@ class Session:
         if not self._collecting or self.stt is None:
             return
         self._audio_bytes += len(pcm)
-        await self.stt.send_audio(pcm)
+        if self._turn_audio is None:
+            self._new_turn_audio()
+        self._abuf.extend(pcm)
+        while len(self._abuf) >= FRAME_BYTES:
+            frame = bytes(self._abuf[:FRAME_BYTES])
+            del self._abuf[:FRAME_BYTES]
+            for out in self._turn_audio.push(frame):
+                await self.stt.send_audio(out)
         if self._audio_bytes >= MAX_AUDIO_BYTES:
             self._collecting = False
-            self._spawn(self._too_long_turn(self.turn_id))
+            noise = await self._close_turn_audio()
+            self._spawn(self._too_long_turn(self.turn_id, noise))
+
+    # ---- noise handling (CONTRACT 3.5) --------------------------------------------------------------------------
+    def _new_turn_audio(self) -> None:
+        s = self.app.settings
+        self._turn_audio = TurnAudio(trim=s.noise_trim, trim_db=s.noise_trim_db, confirm_db=s.noise_confirm_db)
+        self._abuf = bytearray()
+
+    def _discard_turn_audio(self) -> None:
+        """A cancelled recording: its audio goes nowhere and nothing of it reaches the next turn."""
+        self._turn_audio = None
+        self._abuf = bytearray()
+
+    async def _close_turn_audio(self) -> dict | None:
+        """Send the partial last frame and the frames the gate still holds, in order; return the turn's noise
+        measurement for `timing` ({"separation_db","noisy","turned_down_ms"}) or None when there was no audio."""
+        ta, self._turn_audio = self._turn_audio, None
+        if ta is None:
+            self._abuf = bytearray()
+            return None
+        held: list[bytes] = []
+        if self._abuf:
+            held += ta.push(bytes(self._abuf))
+            self._abuf = bytearray()
+        held += ta.flush()
+        if self.stt is not None:
+            for out in held:
+                await self.stt.send_audio(out)
+        stats = ta.stats()
+        if not stats.get("frames"):
+            return None
+        return {"separation_db": stats["separation_db"], "noisy": bool(stats["noisy"]),
+                "turned_down_ms": stats["turned_down_ms"]}
 
     # ---- turns ------------------------------------------------------------------------------------------------
     async def _greeting_turn(self) -> None:
@@ -342,7 +394,7 @@ class Session:
         await self._none_turn(tid, reason)
         await self._drain_stt()
 
-    async def _too_long_turn(self, tid: int) -> None:
+    async def _too_long_turn(self, tid: int, noise: dict | None = None) -> None:
         """A recording cut at 30 seconds: the too-long reply, nothing parsed or saved (M07)."""
         t0 = time.perf_counter()
         await self._state_msg(tid, "transcribing")
@@ -351,14 +403,14 @@ class Session:
             return
         turn = self.app.pipeline.too_long(self.state)
         await self._send(turn.message(tid))
-        await self._speak(tid, turn, t0, {})
+        await self._speak(tid, turn, t0, _noise_ms(noise))
 
-    async def _fixed_turn(self, tid: int, turn: TurnResult, t_end: float) -> None:
+    async def _fixed_turn(self, tid: int, turn: TurnResult, t_end: float, noise: dict | None = None) -> None:
         await self._send(turn.message(tid))
-        await self._speak(tid, turn, t_end, {})
+        await self._speak(tid, turn, t_end, _noise_ms(noise))
 
     async def _audio_turn(self, tid: int, t_end: float, utt_id: str | None = None,
-                          device_ts: str | None = None) -> None:
+                          device_ts: str | None = None, noise: dict | None = None) -> None:
         await self._state_msg(tid, "transcribing")
         try:
             res = await asyncio.wait_for(self.stt.end_turn(), FINAL_WAIT_S)
@@ -370,33 +422,34 @@ class Session:
         if res is None or res.error:
             message = res.error if res is not None else "no final transcript"
             await self._send({"type": "error", "turn_id": tid, "code": "stt_upstream", "message": message})
-            await self._upstream_failure(tid, t_end)
+            await self._upstream_failure(tid, t_end, noise)
             return
         if not res.text.strip():
             if res.heard:
-                await self._fixed_turn(tid, self.app.pipeline.empty_transcript(self.state), t_end)
+                await self._fixed_turn(tid, self.app.pipeline.empty_transcript(self.state), t_end, noise)
             else:
-                await self._fixed_turn(tid, self.app.pipeline.silence(self.state), t_end)
+                await self._fixed_turn(tid, self.app.pipeline.silence(self.state), t_end, noise)
             return
         last = len(res.segments) - 1
         for i in range(len(res.segments) - 1):
             await self._send({"type": "transcript", "turn_id": tid, "text": " ".join(res.segments[:i + 1]),
                               "segment": i, "final": False})
         await self._send({"type": "transcript", "turn_id": tid, "text": res.text, "segment": last, "final": True})
-        await self._respond(tid, res.text, t_end, {"stt_final": stt_ms, "gnani_stt_latency": res.latency_ms},
-                            utt_id=utt_id, device_ts=device_ts)
+        await self._respond(tid, res.text, t_end, {"stt_final": stt_ms, "gnani_stt_latency": res.latency_ms,
+                                                   **_noise_ms(noise)},
+                            utt_id=utt_id, device_ts=device_ts, noisy=bool(noise and noise["noisy"]))
 
-    async def _upstream_failure(self, tid: int, t_end: float) -> None:
+    async def _upstream_failure(self, tid: int, t_end: float, noise: dict | None = None) -> None:
         turn = self.app.pipeline.upstream_failure(self.state)
         await self._send(turn.message(tid))
-        await self._speak(tid, turn, t_end, {})
+        await self._speak(tid, turn, t_end, _noise_ms(noise))
 
     async def _respond(self, tid: int, text: str, t_start: float, base: dict, *, utt_id: str | None = None,
-                       device_ts: str | None = None) -> None:
+                       device_ts: str | None = None, noisy: bool = False) -> None:
         await self._state_msg(tid, "thinking")
         # `run_turn` is synchronous: a `start` that arrives while it runs is handled after it, so a saved entry is
         # always reported and only its speech can be cancelled (M10).
-        turn = self.app.pipeline.run_turn(self.state, text, utt_id=utt_id, device_ts=device_ts)
+        turn = self.app.pipeline.run_turn(self.state, text, utt_id=utt_id, device_ts=device_ts, noisy=noisy)
         if turn.error_code:
             await self._send({"type": "error", "turn_id": tid, "code": turn.error_code,
                               "message": "this utt_id was already used for another sentence or session"})

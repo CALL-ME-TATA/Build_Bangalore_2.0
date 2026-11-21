@@ -242,12 +242,12 @@ def test_nahi_then_query_runs_query():
 
 def test_nahi_then_full_new_entry_asks_replace():
     r = run("Nahi Sunita ne 500 diye", LAST)
-    assert r["reason"] == "unclear_correction" and r["question"] == "Pichli entry hata kar yeh likhoon?"
+    assert r["reason"] == "unclear_correction" and r["question"] == "Pichli entry hata kar Sunita ke ₹500 jama likhoon?"
     yes = answer(r, "haan", LAST)
     assert yes["action"] == "amend" and yes["target"] == "last"
     assert one(yes) == ("payment", "sunita", 500, D0)
     no = answer(r, "nahi", LAST)
-    assert no["action"] == "append" and one(no) == ("payment", "sunita", 500, D0)
+    assert no["status"] == "rejected" and no["reason"] == "cancelled"  # 1.18: a no cancels, the old entry stays
 
 
 def test_nahi_with_partial_change_amends_directly():
@@ -263,8 +263,10 @@ def test_nahi_with_partial_change_amends_directly():
 ])
 def test_fuzzy_rule_in_resolution(spoken, stored, same):
     r = run(f"{spoken} ko 100 udhaar", {"customers": [{"id": "c1", "name": stored, "tags": []}]})
-    e = r["events"][0]
-    assert (e.get("customer_id") == "c1") is same
+    if same:
+        assert r["events"][0].get("customer_id") == "c1"
+    else:  # 1.18: a close name is never matched and always asks, with the stored customer offered
+        assert r["reason"] == "new_customer" and [c["id"] for c in r["candidates"]] == ["c1"]
 
 
 # 8. Two-word names, first-person words, English auxiliaries ----------------------------------------------------

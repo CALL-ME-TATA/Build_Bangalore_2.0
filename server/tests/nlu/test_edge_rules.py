@@ -336,11 +336,11 @@ def test_E09_unknown_name_asks_when_the_server_wants_it():
     r = run("Rakes ka 50 udhaar", ctx)
     assert r["reason"] == "new_customer" and [c["id"] for c in r["candidates"]] == ["c1"]
     assert r["question"] == "Rakes naya customer hai, ya Rakesh?"
-    assert run("Rakes ka 50 udhaar", roster({"id": "c1", "name": "rakesh"}))["events"][0]["new_customer"] is True
+    # 1.18: a close name asks whatever limits.confirm_new_customer says
+    assert run("Rakes ka 50 udhaar", roster({"id": "c1", "name": "rakesh"}))["reason"] == "new_customer"
 
 
 @pytest.mark.parametrize("reply,expect", [
-    ("haan", {"customer": "rakes", "new_customer": True}),
     ("naya", {"customer": "rakes", "new_customer": True}),
     ("bana do", {"customer": "rakes", "new_customer": True}),
     ("Rakesh", {"customer": "rakesh", "customer_id": "c1"}),
@@ -354,6 +354,12 @@ def test_E09_new_customer_answers(reply, expect):
     r = answer(first, reply, ctx)
     assert r["status"] == "ok", r
     assert {k: r["events"][0].get(k) for k in expect} == expect
+
+
+def test_E09_either_or_question_takes_no_bare_yes():
+    ctx = dict(roster({"id": "c1", "name": "rakesh"}), limits=CONFIRM_NEW)
+    r = answer(run("Rakes ka 50 udhaar", ctx), "haan", ctx)
+    assert r["reason"] == "new_customer" and r["pending"]["attempts"] == 1  # 1.18: asked again
 
 
 def test_E09_new_customer_no_cancels_and_another_name_resolves_again():
@@ -651,7 +657,7 @@ def test_K01_same_entry_within_duplicate_s_confirms():
 def test_absent_new_fields_keep_todays_behaviour():
     assert one(run("Ramesh ne 1000 diya"))[2] == 1000
     assert run("Ramesh ka 1500 udhaar")["status"] == "ok"
-    assert run("Rakes ka 50 udhaar", roster({"id": "c1", "name": "rakesh"}))["status"] == "ok"
+    assert run("Rakes ka 50 udhaar", roster({"id": "c1", "name": "rakesh"}))["reason"] == "new_customer"  # 1.18
 
 
 @pytest.mark.parametrize("utterance", ["999999999999999999999", "2k" * 50, "-" * 30 + "5", "ko" * 40, "1,,,2",

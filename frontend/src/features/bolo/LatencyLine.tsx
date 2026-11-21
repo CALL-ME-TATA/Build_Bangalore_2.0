@@ -1,9 +1,10 @@
 // The latency of the last turn in small meta text ("Server 840 ms · Phone 910 ms"). Tapping it opens the
-// per-stage figures from the `timing` message, in plain words, with the phone's own figure last.
+// per-stage figures from the `timing` message, in plain words, with the phone's own figure last, and, for a
+// spoken turn on a server with noise handling (contract 3.5), the voice-to-noise separation in dB.
 import { ChevronDown } from 'lucide-react';
 import { useId, useState } from 'react';
 import { labels, type Lang, type LabelKey } from '../../i18n';
-import type { TimingKey } from '../../services/session/types';
+import type { NoiseInfo, TimingKey } from '../../services/session/types';
 
 /** Rows of the breakdown, in pipeline order; stages the server did not report are left out. */
 export function latencyRows(ms: Partial<Record<TimingKey, number | null>>, phone: number | null, lang: Lang): { label: string; ms: number }[] {
@@ -25,11 +26,31 @@ export function latencyRows(ms: Partial<Record<TimingKey, number | null>>, phone
   return rows;
 }
 
-export function LatencyLine({ server, phone, ms, lang }: { server: number | null; phone: number | null; ms: Partial<Record<TimingKey, number>>; lang: Lang }) {
+/** The separation row: "Awaaz aur shor ka fark · 23.5 dB (shor zyada)"; null when the turn has no measurement. */
+export function noiseRow(noise: NoiseInfo | null, lang: Lang): { label: string; value: string } | null {
+  if (!noise) return null;
+  const L = labels(lang);
+  return { label: L.noiseSeparation, value: `${noise.separation_db.toFixed(1)} dB${noise.noisy ? ` ${L.noiseNoisySuffix}` : ''}` };
+}
+
+export function LatencyLine({
+  server,
+  phone,
+  ms,
+  noise = null,
+  lang,
+}: {
+  server: number | null;
+  phone: number | null;
+  ms: Partial<Record<TimingKey, number>>;
+  noise?: NoiseInfo | null;
+  lang: Lang;
+}) {
   const L = labels(lang);
   const [open, setOpen] = useState(false);
   const id = useId();
   const rows = latencyRows(ms, phone, lang);
+  const sep = noiseRow(noise, lang);
   const summary = [server != null ? `${L.latencyServer} ${server} ms` : '', phone != null ? `${L.latencyPhone} ${phone} ms` : ''].filter(Boolean).join(' · ');
   return (
     <div className="flex flex-col gap-2">
@@ -53,6 +74,12 @@ export function LatencyLine({ server, phone, ms, lang }: { server: number | null
             </dd>
           </div>
         ))}
+        {sep ? (
+          <div className="flex items-baseline justify-between gap-4 border-b border-line py-2 text-meta">
+            <dt className="text-ink-2">{sep.label}</dt>
+            <dd className="shrink-0 text-ink tabular">{sep.value}</dd>
+          </div>
+        ) : null}
       </dl>
     </div>
   );

@@ -92,7 +92,9 @@ export function sheetReduce(s: SheetState, e: SheetEvent): SheetState {
     case 'result': {
       if (e.duplicate) return s; // a replay: never opens, changes or closes the sheet
       const asking = s.stage === 'asking' || s.stage === 'waiting';
-      if (s.stage !== 'closed' && e.action === 'none' && IGNORED_WHILE_ASKING.has(e.reason ?? '')) return s;
+      // The silent turn after an accidental press (no reply text). A spoken "Theek hai, entry nahi ki." is the
+      // answer "Nahi" and closes the sheet as usual.
+      if (s.stage !== 'closed' && e.action === 'none' && IGNORED_WHILE_ASKING.has(e.reason ?? '') && !e.replyText) return s;
       const text = e.replyText || e.question || '';
       if (e.status === 'needs_clarification' && text) {
         const spec = doubtSpec({ reason: e.reason, question: text, candidates: e.candidates, confirm: e.confirm, lang: e.lang });

@@ -68,7 +68,7 @@ CREATE TRIGGER IF NOT EXISTS consent_no_delete BEFORE DELETE ON consent_log
 # Columns added after the first release, created with ALTER TABLE when an older database lacks them.
 ADDED_COLUMNS = {
     "events": [("adjustment", "TEXT")],
-    "utterances": [("device_ts", "TEXT"), ("status", "TEXT"), ("action", "TEXT")],
+    "utterances": [("device_ts", "TEXT"), ("status", "TEXT"), ("action", "TEXT"), ("noisy", "INTEGER")],
 }
 
 # An event is active when it is a credit or payment that no reversal points at.
@@ -508,14 +508,18 @@ class Ledger:
         blob = self.crypto.encrypt(body, f"utterances:{utterance_id}")
         result = body.get("result") or {}
         self.conn.execute(
-            "INSERT INTO utterances(id, ts, session_id, body, device_ts, status, action) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO utterances(id, ts, session_id, body, device_ts, status, action, noisy)"
+            " VALUES (?,?,?,?,?,?,?,?)",
             (utterance_id, now.isoformat(), session_id, blob, (device_ts or None) and str(device_ts)[:64],
-             body.get("status"), result.get("action")))
+             body.get("status"), result.get("action"), 1 if body.get("noisy") else 0))
 
     def record_utterance(self, utterance_id: str, session_id: str | None, now: datetime, *, transcript: str,
                          status: str, reply_text: str, timings: dict | None = None, result: dict | None = None,
-                         device_ts: str | None = None, fingerprint: str | None = None) -> None:
+                         device_ts: str | None = None, fingerprint: str | None = None,
+                         noisy: bool = False) -> None:
         body = {"transcript": transcript, "status": status, "reply_text": reply_text, "timings": timings or {}}
+        if noisy:
+            body["noisy"] = True
         if result is not None:
             body["result"] = result
         if fingerprint is not None:
@@ -668,7 +672,8 @@ class Ledger:
             return {"turns": count(), "saves": count("status='ok' AND action='append'"),
                     "questions": count("status='needs_clarification'"), "rejections": count("status='rejected'"),
                     "corrections": count("status='ok' AND action='amend'"),
-                    "undos": count("status='ok' AND action='undo'"), "confusions": pairs}
+                    "undos": count("status='ok' AND action='undo'"), "noisy_turns": count("noisy=1"),
+                    "confusions": pairs}
 
     def _entry(self, row: sqlite3.Row) -> dict:
         c = self._customers().get(row["customer_id"], {"id": row["customer_id"], "display": "?", "tags": []})

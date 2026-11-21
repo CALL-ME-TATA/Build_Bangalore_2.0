@@ -189,3 +189,47 @@ describe('numberWords', () => {
     expect(numberWords(5, 'en')).toBe('five');
   });
 });
+
+describe('contract 3.4 / 1.18 sheet points', () => {
+  test('same_name with three customers: three buttons sending pehla / doosra / teesra', () => {
+    const candidates = [
+      { id: 'c1', display: 'Ramesh', tags: ['chai wale'] },
+      { id: 'c2', display: 'Ramesh', tags: ['gali 3'] },
+      { id: 'c3', display: 'Ramesh', tags: [] },
+    ];
+    const s = spec('same_name', 'Kaunse Ramesh: chai wale, gali 3 ya bina tag wale?', { candidates });
+    expect(s.options.map((o) => [o.label, o.sub, o.answer])).toEqual([
+      ['Ramesh', 'Chai wale', 'pehla'],
+      ['Ramesh', 'Gali 3', 'doosra'],
+      ['Ramesh', 'Bina tag wale', 'teesra'],
+    ]);
+    // Without candidates the three names come from the text, and the answers are still the ordinals.
+    expect(answers('same_name', 'Kaunse Ramesh: chai wale, gali 3 ya bina tag wale?')).toEqual(['pehla', 'doosra', 'teesra']);
+    expect(labelsOf('same_name', 'Kaunse Ramesh: chai wale, gali 3 ya bina tag wale?')).toEqual(['Chai wale', 'Gali 3', 'Bina tag wale']);
+  });
+
+  test('same_name with two customers looks and works exactly as before', () => {
+    const two = spec('same_name', 'Kaunse Ramesh: chai wale ya pehle wale?', {
+      candidates: [
+        { id: 'c1', display: 'Ramesh', tags: ['chai wale'] },
+        { id: 'c2', display: 'Ramesh', tags: [] },
+      ],
+    });
+    expect(two.options.map((o) => [o.label, o.sub, o.answer])).toEqual([
+      ['Ramesh', 'Chai wale', 'chai wale'],
+      ['Ramesh', undefined, 'doosra'],
+    ]);
+    expect(answers('same_name', 'Kaunse Ramesh: chai wale ya gali number 3?')).toEqual(['chai wale', 'gali number 3']);
+  });
+
+  test('the longer replace check is still yes / no, and Nahi sends a plain no', () => {
+    const s = spec('unclear_correction', 'Pichli entry hata kar Geeta ke ₹500 udhaar likhoon?');
+    expect(s.kind).toBe('yesno');
+    expect(s.options.map((o) => [o.label, o.answer])).toEqual([
+      ['Haan', 'haan'],
+      ['Nahi', 'nahi'],
+    ]);
+    // The ₹ amount in the longer wording must not turn it into an entry choice.
+    expect(s.options.some((o) => o.amount != null)).toBe(false);
+  });
+});

@@ -99,7 +99,7 @@ def test_reply_templates():
     assert R.nothing_to_undo().text == "Undo karne ke liye kuch nahi hai."
     assert R.nothing_to_amend().text == "Pehle koi entry nahi hai."
     assert R.confusable(340, 740).text == "₹340 ya ₹740?"
-    assert R.same_name("Ramesh", ["chai wale", ""]).text == "Kaunse Ramesh: chai wale ya pehle wale?"
+    assert R.same_name("Ramesh", ["chai wale", ""]).text == "Kaunse Ramesh: chai wale ya bina tag wale?"
     assert R.missing_amount().text == "Kitne rupaye?" and R.missing_customer().text == "Kiska khata?"
     assert R.direction("Ramesh").text == "Ramesh ne diye, ya Ramesh ko udhaar?"
     assert R.plausibility(60000).text == "₹60,000, pakka?"
@@ -131,7 +131,7 @@ def test_clarification_dispatch():
     assert r.text == "₹340 ya ₹740?"
     r = R.clarification({"reason": "same_name", "candidates": [
         {"id": "a", "name": "ramesh", "tags": ["chai wale"]}, {"id": "b", "name": "ramesh", "tags": []}]})
-    assert r.text == "Kaunse Ramesh: chai wale ya pehle wale?"
+    assert r.text == "Kaunse Ramesh: chai wale ya bina tag wale?"
     r = R.clarification({"reason": "plausibility", "pending": {"events": [{"amount": 60000}]}})
     assert r.text == "₹60,000, pakka?"
 

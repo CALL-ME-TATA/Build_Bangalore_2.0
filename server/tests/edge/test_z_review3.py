@@ -255,7 +255,7 @@ def test_Z26_balances_in_a_chain_are_not_spoken_in_private_mode(live_stack):
 def test_Z27_several_entries_pending_carry_the_name_in_the_question(live_stack):
     lv(live_stack, ramesh=1000, mohan=140)
     c = live_stack.session()
-    assert say(c, "Ramesh ka 200 udhaar aur Mohan ka baaki maaf kar do")["reply_text"] == "Mohan ke kitne rupaye?"
+    assert say(c, "Ramesh ka 200 udhaar aur Mohan ka baaki maaf kar do")["reply_text"] == "Mohan ke kitne rupaye maaf karun?"  # 5.1 (1.18)
     c2 = live_stack.session()
     assert say(c2, "Ramesh ka 99000 udhaar aur Mohan ka 200 udhaar")["reply_text"] == "Ramesh ke ₹99,000, pakka?"
 
