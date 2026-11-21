@@ -161,7 +161,10 @@ CASES = [
                                                            "events": [
         {"kind": C, "customer": "ramesh", "amount": 100, "date": D0},
         {"customer": "sunita", "amount": 200, "date": D0}]}},
-     ok((C, "ramesh", 100, D0), (C, "sunita", 200, D0))),
+     # Two entries after a question are read back once before saving (1.16 B1).
+     {"status": "needs_clarification", "reason": "confirm_entry", "confirm": {"type": "review"},
+      "pending": {"events": [{"kind": C, "customer": "ramesh", "amount": 100, "date": D0},
+                             {"kind": C, "customer": "sunita", "amount": 200, "date": D0}]}}),
     ("pend-correction-number", "430", dict(LAST, pending={"reason": "unclear_correction", "action": "amend",
                                                           "events": []}),
      ok((C, "ramesh", 430, D0), action="amend")),

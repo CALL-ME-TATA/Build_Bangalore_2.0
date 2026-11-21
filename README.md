@@ -90,11 +90,18 @@ or "nahi" settles it. Nothing is saved while a question is open.
   ("500 na diye", "did not pay") is refused.
 - **Misheard names.** A name written twice ("Ramish Ramesh") or split in two ("Diwa Kar" for Divakar) is matched to
   the one existing customer it fits.
+- **Questions that say what will be saved.** Each new name is asked about once ("Mohan naya grahak hai. Khata
+  banaun?"). When a sentence of several entries needed a question about a missing or unclear field, all of them are
+  read back before saving ("2 entry likhun: ...?"). A date ("21 November"), a time or a stated balance ("300 baaki
+  hai") is never taken as an amount.
+- **Instructions that change the ledger are confirmed.** "Usko 430 kar do" asks "Ramesh ki ₹340 udhaar entry ₹430
+  kar doon?", and "Ramesh ka 200 maaf kar do" asks "Ramesh ke ₹200 maaf karun?". Nothing changes until the answer
+  is yes.
 - **No double saves.** Each turn carries an id; if the page retries a turn, the server returns the first result and
   saves nothing twice.
 
-The rules are CONTRACT sections 1.14, 1.15, 2.1, 3.3 and 5.1 in [docs/CONTRACT.md](docs/CONTRACT.md), written against
-the edge-case list in [docs/EDGE_CASES.md](docs/EDGE_CASES.md) and the findings of a second review. Results: [docs/EDGE_REPORT.md](docs/EDGE_REPORT.md)
+The rules are CONTRACT sections 1.14 to 1.16, 2.1, 3.3 and 5.1 in [docs/CONTRACT.md](docs/CONTRACT.md), written against
+the edge-case list in [docs/EDGE_CASES.md](docs/EDGE_CASES.md) and the findings of two further reviews. Results: [docs/EDGE_REPORT.md](docs/EDGE_REPORT.md)
 (per case) and [docs/SCOREBOARD.md](docs/SCOREBOARD.md) (parser accuracy over the golden cases).
 
 ## Architecture
@@ -257,15 +264,15 @@ uses real credits.
 
 ## Tests
 
-Counts from a run on 2026-11-21 at 17:42 IST:
+Counts from a run on 2026-11-21 at 19:06 IST:
 
 | Suite | Tests |
 |---|---|
-| Parser and golden cases (`server/tests/nlu`, number round trips, fractions, oracle, `test_golden.py`) | 4,308 |
-| Server (`server/tests/app`) | 188 |
-| Edge cases (`server/tests/edge`): 209 of 234 cases (the list in docs/EDGE_CASES.md plus the review and unlisted-sentence groups), 25 left as manual checks | 645 |
+| Parser and golden cases (`server/tests/nlu`, number round trips, fractions, oracle, `test_golden.py`) | 4,524 |
+| Server (`server/tests/app`) | 205 |
+| Edge cases (`server/tests/edge`): 226 of 251 cases (the list in docs/EDGE_CASES.md plus the review and unlisted-sentence groups), 25 left as manual checks | 742 |
 | End-to-end and scoreboard (`server/tests/e2e`, `test_scoreboard.py`) | 103 |
-| Web app (`frontend/`, `npm test`) | 262 |
+| Web app (`frontend/`, `npm test`) | 270 |
 
 From `server/` (use `../.venv/Scripts/python` on Windows or `../.venv/bin/python` elsewhere):
 

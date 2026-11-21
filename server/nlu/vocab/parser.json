@@ -18,7 +18,7 @@
   ],
   "beta": [
    "ka",
-   "beta ladka son बेटा लड़का"
+   "beta ladka son बेटा लड़का bete"
   ],
   "bhai": [
    "ka",
@@ -235,7 +235,9 @@
   "lakhs",
   "inr",
   "cancel",
-  "undo"
+  "undo",
+  "total",
+  "payment"
  ],
  "aux_stems": [
   "likh",
@@ -260,7 +262,11 @@
   "baje",
   "item",
   "items",
-  "number"
+  "number",
+  "byaj",
+  "byaaj",
+  "interest",
+  "sood"
  ],
  "out_of_scope_words": [
   "wholesaler",
@@ -443,7 +449,17 @@
   "milk",
   "oil",
   "soap",
-  "eggs"
+  "eggs",
+  "ration",
+  "kirana",
+  "kiryana",
+  "sabzi",
+  "sabji",
+  "dawai",
+  "dawa",
+  "fal",
+  "phal",
+  "saamaan"
  ],
  "goods_words": [
   "ande",

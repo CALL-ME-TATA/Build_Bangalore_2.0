@@ -8,6 +8,10 @@
 //   saved --(any later result that is not a question)--> closed
 //   any --(dismiss: Esc, swipe down, scrim; or the 60 s question expiry)--> closed
 // A new question always replaces what the sheet shows. The question text is the result's `reply_text`.
+// The server repeats an open question after a silence, an empty transcript, a too-long recording or a speech
+// failure (same reason, a short notice before the question): the sheet updates its text in place, keeping its
+// `seq`, so it neither closes nor moves focus. A result with `action: "none"` and reason too_short / cancelled
+// leaves an open sheet exactly as it is. A replayed result (`duplicate: true`) never opens or changes the sheet.
 // Nothing here is stored: a reloaded page never restores a question (contract 3.3, L05).
 import type { Lang } from '../i18n';
 import type { Candidate, Confirm, Entry } from '../services/session/types';
@@ -35,6 +39,10 @@ export interface SheetState {
   picked: string | null;
   /** What the shopkeeper said in the turn that raised the question (the server sends no other context). */
   context: string;
+  /** The question's `confirm` object (amend shows old and new amounts). */
+  confirm: Confirm | null;
+  /** Bumped when a different question opens; a repeated question keeps it (focus moves only on a new one). */
+  seq: number;
 }
 
 export const sheetClosed: SheetState = {
@@ -50,7 +58,12 @@ export const sheetClosed: SheetState = {
   replyText: '',
   picked: null,
   context: '',
+  confirm: null,
+  seq: 0,
 };
+
+/** Reasons of a result that must leave an open question untouched. */
+const IGNORED_WHILE_ASKING = new Set(['too_short', 'cancelled']);
 
 export type SheetEvent =
   | {
@@ -67,6 +80,8 @@ export type SheetEvent =
       said?: string;
       candidates?: Candidate[];
       confirm?: Confirm | null;
+      action?: string;
+      duplicate?: boolean;
     }
   | { type: 'pick'; option: DoubtOption }
   | { type: 'correct' }
@@ -75,9 +90,13 @@ export type SheetEvent =
 export function sheetReduce(s: SheetState, e: SheetEvent): SheetState {
   switch (e.type) {
     case 'result': {
+      if (e.duplicate) return s; // a replay: never opens, changes or closes the sheet
+      const asking = s.stage === 'asking' || s.stage === 'waiting';
+      if (s.stage !== 'closed' && e.action === 'none' && IGNORED_WHILE_ASKING.has(e.reason ?? '')) return s;
       const text = e.replyText || e.question || '';
       if (e.status === 'needs_clarification' && text) {
         const spec = doubtSpec({ reason: e.reason, question: text, candidates: e.candidates, confirm: e.confirm, lang: e.lang });
+        const repeat = asking && e.reason === s.reason && (e.confirm?.type ?? null) === (s.confirm?.type ?? null);
         return {
           ...sheetClosed,
           stage: 'asking',
@@ -88,15 +107,18 @@ export function sheetReduce(s: SheetState, e: SheetEvent): SheetState {
           options: spec.options,
           typeBox: spec.typeBox,
           lang: e.lang,
-          context: e.said ?? '',
+          // A repeat keeps what the shopkeeper first said (the new turn heard nothing usable).
+          context: repeat ? s.context : (e.said ?? ''),
+          confirm: e.confirm ?? null,
+          seq: repeat ? s.seq : s.seq + 1,
         };
       }
-      if (s.stage === 'closed' || s.stage === 'saved') return sheetClosed;
+      if (s.stage === 'closed' || s.stage === 'saved') return { ...sheetClosed, seq: s.seq };
       const active = e.entries.filter((x) => !x.reversed);
       if (active.length) {
         return { ...s, stage: 'saved', turnId: e.turnId, entries: e.entries, replyText: e.replyText, lang: e.lang, picked: null };
       }
-      return sheetClosed;
+      return { ...sheetClosed, seq: s.seq };
     }
     case 'pick':
       if (s.stage !== 'asking') return s;
@@ -105,7 +127,7 @@ export function sheetReduce(s: SheetState, e: SheetEvent): SheetState {
       if (s.stage !== 'saved') return s;
       return { ...s, stage: 'correcting' };
     case 'dismiss':
-      return sheetClosed;
+      return { ...sheetClosed, seq: s.seq };
     default:
       return s;
   }

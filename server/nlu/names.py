@@ -128,10 +128,21 @@ def _skeleton(word: str) -> tuple[str, str]:
     return consonants, (last if last in _VOWELS else "C")
 
 
+def _name_fold(key: str) -> str:
+    """Name-only folds (1.14, 1.16): th = t, x = ksh, a final y = i (Sunitha = Sunita, Laxmi = Lakshmi,
+    Pinky = पिंकी)."""
+    words = []
+    for w in phonetic_key(key).replace("th", "t").replace("x", "ksh").split():
+        if w.endswith("y") and len(w) > 2:
+            w = w[:-1] + "i"
+        words.append(w)
+    return " ".join(words)
+
+
 def same_person(a: str, b: str) -> bool:
     """Fuzzy name match (CONTRACT 1.12): equal phonetic keys, or the same number of words and, word by word, the
     same consonants in the same order and the same ending. rameysh = ramesh; sunit != sunita; rajan != ranjan."""
-    pa, pb = phonetic_key(a).replace("th", "t"), phonetic_key(b).replace("th", "t")  # Sunitha = Sunita (1.14)
+    pa, pb = _name_fold(a), _name_fold(b)
     if not pa or not pb:
         return False
     if pa == pb:
@@ -172,8 +183,8 @@ def close_name(spoken: str, stored: str) -> bool:
     letters or more ("esh" for "ramesh")."""
     if not spoken or not stored or same_person(spoken, stored):
         return False
-    pa = phonetic_key(spoken).replace("th", "t")
-    pb = phonetic_key(stored).replace("th", "t")
+    pa = _name_fold(spoken)
+    pb = _name_fold(stored)
     wa, wb = pa.split(), pb.split()
     if len(wa) == 1 and len(pa) >= 3 and pb.endswith(pa) and pb != pa:
         return True

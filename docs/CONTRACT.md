@@ -1,4 +1,4 @@
-# CONTRACT v1.3 (2026-11-21)
+# CONTRACT v1.4 (2026-11-21)
 
 The binding interface specification for KhataVaani. Changes go through the tech lead.
 Where this file disagrees with an older note, this file wins.
@@ -550,6 +550,84 @@ Other
 - `yaad` is not a reminder word. A token is split into particle and number (`ko` + `char`) only when the sentence
   then has a stored or carried customer; otherwise it stays whole and is a name (`Kochar ko 500 udhaar`).
 
+### 1.16 Rules from the third review (v1.4; they override anything above that disagrees)
+
+Questions state what will be saved
+- `pending.index` is the event a question is about. The server builds the question from that event, never from the
+  first event in the list.
+- Each distinct unknown name in an utterance gets one `new_customer` question, and one yes never opens two
+  accounts (`Vikram ko 500 udhaar aur Sunit ne 200 diye` asks about Vikram, then about Sunit with Sunita offered).
+  The same name in several events is asked about once (`Mohan ka 340 udhaar, kal 200 diya tha` → one question,
+  `haan`, both entries saved).
+- When the pending result holds two or more events and a question about a missing or ambiguous field was asked
+  (direction, amount, customer, date, which customer, two amounts), or an answer changed a field, the save is
+  preceded by `confirm_entry` type `review`, whose question lists every entry (`2 entry likhun: Ramesh ke ₹500
+  udhaar, Sunita se ₹200 jama?`). Yes saves, no cancels. New-customer questions alone do not need it: every entry
+  was complete in the utterance, and the saved reply lists them.
+- A new-customer question raised by a correction says that an entry is being changed (`confirm.type: "amend"`,
+  below); it never replaces an entry after a bare yes to "naya grahak hai?".
+
+Numbers that are dates, times or balances
+- `N <month name>`, `N/N`, `N-N-N` and a year (`2026 mein`) are dates → `unclear_date`; `N:N`, `N baje` are times and
+  are ignored. None is ever an amount or a name (`Ramesh ko 21 November ko 500 udhaar`).
+- `N baaki hai / hain / tha`, `baaki N` beside an entry states a balance (as H10) and is never an entry
+  (`Ramesh ne 200 diye 300 baaki hai` = one payment of 200).
+- `X ke N mein se M aa gaye / diye` → payment M; N is the total and is ignored.
+- `N rupaye M paise` is not a whole-rupee amount → `missing_amount`.
+- A comma or full stop inside a number phrase does not split it (`teen sau, chalis` = 340).
+
+Number words and names
+- A word that continues a number phrase is part of the number even when it is also a stored name
+  (`teen sau das` = 310 with a customer "Mohan Das"). The name reading applies only where a name can stand: at the
+  start of a clause or directly before a particle.
+- Words that are never a new customer name: the function words in the `nevername` list of `vocab/keywords.json`
+  (`badal`, `badlo`, `sirf`, `lekin`, `jisme`, `usme`, `isme`, `hi`, `edit`, `amount`, `correction` ...), `entry`, and
+  month and weekday names. Other vocabulary words (`karo`, `karke`, `kiya`, `kam`, `change`, `byaj`, `interest`) are
+  a name only directly before a particle (rule 1.12: `Abhi ko 200 udhaar`, `Diya ko 200 udhaar`), where the
+  new-customer question still asks first; anywhere else they are never a name (`change karke 430 kar do`). An
+  utterance with no usable name never produces a question about an empty name.
+- Name matching also folds a final `y` and `i` (`पिंकी` = `pinky`) and `x` with `ksh` (`Laxmi` = `Lakshmi`).
+
+Corrections phrased as instructions
+- `usko / uska / isko N kar do`, `N karo`, `wo galat tha, N likho`, `N likhna tha`, `sorry N likho`,
+  `change karke N kar do` right after an entry are corrections, never a second entry: `confirm_entry` type `amend`
+  with `confirm: {"type": "amend", "old": 340, "new": 430}`; yes amends the entry. A plain correction right after
+  the entry (`nahi, 430`, `galat, 430`, `wrong, 430`) stays a direct amend (1.6).
+- A correction after a turn that was not an entry (a question, a query, a rejection, a silence) is no longer rejected
+  outright: when the session still has a last active entry it gets the same `amend` confirmation naming that entry.
+  After an undo it is still rejected `no_last_event`.
+- A correction that changes nothing, or `amount galat hai` with no new amount → `unclear_correction` with the
+  unclear-correction wording (`Sahi amount boliye, ya hata do boliye.`), never the replace wording.
+- The over-payment check on an amend leaves out the entry being replaced.
+
+Reductions and mixed sentences
+- `write off`, `maaf`, `chhod do`, `discount`, `chhoot`, `kam kar do` with one amount (`Ramesh ka 200 maaf kar do`,
+  `Ramesh ko 50 ka discount diya`) → `confirm_entry` type `writeoff` for that amount. Never a credit.
+- Three amounts where the first minus the second is the third (`340 ka saaman liya, 300 diye, 40 udhaar likh do`) →
+  `confirm_entry` `computed`: one credit of the third amount.
+- A credit clause followed by a payment cue with no amount of its own (`500 ka saaman liya aur payment kar diya`,
+  `500 udhaar diya tha wo aa gaya`, `... usne de diye`) is never saved as the credit alone → `ambiguous_direction`.
+- `de do`, `de dena` (an instruction to give) → `ambiguous_direction`. `X ko N advance diya` → `ambiguous_direction`.
+- An entry and a query in one sentence (`Ramesh ne 200 diye ab kitna baaki hai`) → `confirm_entry` `hearsay` for the
+  entry; the entry is never dropped silently.
+- `X ko kitna dena hai`, `X se kitna lena hai` → balance query.
+- Payments said with `mil gaye`, `aa gaye`, `Google Pay / PhonePe / Paytm / UPI kiya`, `transfer kiya`, `bheje`,
+  `bhej diye` → payment.
+- One customer paying for another (`Sunita ne Ramesh ke 200 diye`) → rejected `out_of_scope`; the parser does not
+  guess whose account moves.
+
+Answers
+- A direction word in an answer is honoured through `nahi` and `to` (`nahi 300 jama` to a credit confirmation is a
+  conflict, so a failed attempt; it never saves the pending kind). Same-name answers get the same conflict check.
+- `usko / unko / inko diye` → credit; `usne / unhone / inhone diye` → payment.
+- Also accepted: `haan udhaar`, `le gayi`, `liye`, `udhaar N` and `jama N` when N is the pending amount,
+  `jama nahi udhaar` (the word after `nahi` wins); `likh do` as yes to a "likhun?" question; `kal ka`, `aaj hi` as
+  date answers; `mat banao`, `nahi banana` as no to the new-customer question. A date word in a customer answer is
+  kept (`Ramesh ka kal ka`).
+- The duplicate question takes only yes or no; a number is a failed attempt.
+- Same-name and which-entry questions name what they are about: the clause's amount for a same-name question in a
+  two-clause sentence, and the customer for each entry in a which-entry question.
+
 ## 2. Ledger (`server/app/ledger.py`), SQLite with field-level AES-256-GCM
 
 SQLCipher cannot load on the dev machine, so encryption is applied in the application with `cryptography` (AESGCM).
@@ -744,6 +822,13 @@ Rules
 - The page starts a new session on every page load (no `resume`), so the greeting and the AI disclosure are heard
   again. `resume` is for an automatic reconnect inside a loaded page.
 - No message is sent when a question expires; the page closes its question sheet on the same 60-second timer.
+- While a question is open, a turn that is not an answer because nothing usable was heard (silence, an empty
+  transcript, a recording that was too long, a speech-service failure) keeps the question open and returns it
+  again: `result` with status `needs_clarification`, the same reason, candidates and confirm, and a reply that puts
+  the short notice before the question (`Kuch sunai nahi diya. Ramesh ke ₹250 udhaar likhun?`). A recording
+  shorter than 0.5 s and a `cancel` change nothing and the page keeps its question sheet.
+- A repeated `utt_id` whose first result was a question that is no longer the open one is answered with a
+  rejected result (`reason: "cancelled"`, the cancelled reply); a replay never puts an old question back on screen.
 - A `start` that arrives while an earlier turn is still open: if that turn's entry is already saved the save stands
   and only its speech is cancelled; if not, the earlier turn is dropped. A turn is never saved twice (M10).
 - Action `reminder` (Q08): the server checks opt-in, quiet hours and the real balance. A spoken amount that differs
@@ -866,6 +951,9 @@ from `nlu.speak.number_to_words`, sent to TTS). Keep them under about 12 words. 
 | Confirm `writeoff` (H06) | `{name} ke ₹{bal} baaki hain. Poore maaf karun?` | `{name} owes ₹{bal}. Write all of it off?` |
 | Confirm `roundoff` (H09) | `{name} ke ₹{bal} baaki hain. ₹{amt} chhod doon?` | `{name} owes ₹{bal}. Drop ₹{amt}?` |
 | Confirm `overpayment` (H08) | `{name} ke sirf ₹{bal} baaki hain. ₹{amt} hi likhun?` / with nothing due: `{name} ka kuch baaki nahi. ₹{amt} advance likhun?` | `{name} owes only ₹{bal}. Record ₹{amt} anyway?` / `{name} owes nothing. Record ₹{amt} as an advance?` |
+| Confirm `review` (1.16) | `2 entry likhun: {name} ke ₹{a} udhaar, {name2} se ₹{b} jama?` | `Save 2 entries: ₹{a} credit for {name}, ₹{b} received from {name2}?` |
+| Confirm `amend` (1.16) | `{name} ki ₹{old} {udhaar\|jama} entry ₹{new} kar doon?` | `Change {name}'s ₹{old} {credit\|payment} entry to ₹{new}?` |
+| Confirm `writeoff` with an amount (1.16) | `{name} ke ₹{amt} maaf karun?` | `Write off ₹{amt} for {name}?` |
 | Confirm `duplicate` (K01) | `Yeh entry abhi likhi hai. Ek aur likhun?` | `I just saved this entry. Save another one?` |
 | Write-off saved | `{name} ke ₹{amt} maaf kiye.` | `Wrote off ₹{amt} for {name}.` |
 | Silence (M02) | `Kuch sunai nahi diya. Dobara boliye.` | `I could not hear anything. Please say it again.` |

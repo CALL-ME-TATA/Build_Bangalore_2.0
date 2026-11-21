@@ -161,7 +161,8 @@ def test_nothing_from_the_pending_question_leaks_into_a_fresh_save(label, uttera
 # --- 1.15: yes plus an undo word, negated or two-name answers, two amounts in an answer --------------------------
 
 @pytest.mark.parametrize("label,utterance,ctx,reason,kind", PENDINGS, ids=[p[0] for p in PENDINGS])
-@pytest.mark.parametrize("reply", ["haan hata do", "ok cancel karo", "theek hai mita do", "yes delete", "haan rehne do"])
+@pytest.mark.parametrize("reply", ["haan hata do", "ok cancel karo", "theek hai mita do", "yes delete",
+                                   "haan rehne do"])
 def test_yes_plus_undo_word_never_saves(label, utterance, ctx, reason, kind, reply):
     pending = make_pending(utterance, ctx, reason, kind)
     r = follow(pending, ctx, reply)

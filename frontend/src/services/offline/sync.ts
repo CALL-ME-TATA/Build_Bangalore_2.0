@@ -62,6 +62,17 @@ function ensureLoaded(): Promise<void> {
   return loaded;
 }
 
+/**
+ * Whether the question an outbox sentence raised is still open on the server: it is asked again after a
+ * silence or a failure, and an accidental press (too_short, cancelled) or a replayed duplicate leaves it open.
+ */
+function questionStillOpen(s: SessionStore): boolean {
+  const r = s.result;
+  if (!r) return true; // a new turn has started and has no result yet
+  if (r.status === 'needs_clarification' || r.duplicate) return true;
+  return r.action === 'none' && (r.reason === 'too_short' || r.reason === 'cancelled');
+}
+
 function gateOf(s: SessionStore) {
   return {
     started: s.started,
@@ -71,14 +82,14 @@ function gateOf(s: SessionStore) {
     phase: s.phase,
     audioTurn: s.audioTurn,
     micOpen: useMicGesture.getState().open,
-    questionOpen: heldByQuestion && s.result?.status === 'needs_clarification' && Date.now() - heldSince < QUESTION_TTL_MS,
+    questionOpen: heldByQuestion && questionStillOpen(s) && Date.now() - heldSince < QUESTION_TTL_MS,
   };
 }
 
 function tick(): void {
   if (!running || inflight) return;
   const s = useSession.getState();
-  if (heldByQuestion && s.result?.status !== 'needs_clarification') heldByQuestion = false;
+  if (heldByQuestion && !questionStillOpen(s)) heldByQuestion = false;
   let next = nextToSend(items());
   if (!next || !canSend(gateOf(s))) return;
   if (!next.uttId) {

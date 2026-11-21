@@ -484,7 +484,7 @@ def test_strict_mode_unsure_question_never_shows_the_unknown_words(pipeline, par
     for events, hi, en in (
             (one, "Ramesh ke ₹340 udhaar likhun?", "Add ₹340 credit for Ramesh?"),
             (two, "2 entry likhun: Ramesh ke ₹340 udhaar, kal ke ₹200 jama?",
-             "Save 2 entries: ₹340 credit for Ramesh, and ₹200 received yesterday?")):
+             "Save 2 entries: ₹340 credit for Ramesh, ₹200 received yesterday?")):
         parser.canned["u"] = _confirm("unsure", events, words=["blorf"])
         for lang, want in (("hi", hi), ("en", en)):
             st = SessionState(session_id="s" + lang, disclosed=True, lang=lang)

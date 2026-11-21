@@ -2,7 +2,7 @@
 
 Written by `scripts/edge_report.py` from the tests in `server/tests/edge/`.
 
-234 cases: 209 pass, 0 fail, 25 manual, 0 without a test (645 tests run).
+251 cases: 226 pass, 0 fail, 25 manual, 0 without a test (742 tests run).
 
 ## A. Number parsing
 
@@ -342,6 +342,28 @@ Written by `scripts/edge_report.py` from the tests in `server/tests/edge/`.
 | Y19 | Kochar is a name | pass |  |
 | Y20 | private mode confirm questions | pass |  |
 | Y21 | reused utt_id | pass |  |
+
+## Z. Second review
+
+| ID | Case | Result | First failing assertion |
+|---|---|---|---|
+| Z01 | two-entry sentences and questions | pass |  |
+| Z02 | stray numbers | pass |  |
+| Z03 | usko / usne answers | pass |  |
+| Z04 | number-word names | pass |  |
+| Z05 | make it N corrections | pass |  |
+| Z06 | reductions | pass |  |
+| Z07 | purchase plus payment | pass |  |
+| Z08 | answers that conflict with the pending kind | pass |  |
+| Z09 | change karke | pass |  |
+| Z10 | duplicate question takes yes or no | pass |  |
+| Z11 | replayed utterance | pass |  |
+| Z12 | question survives a silent turn | pass |  |
+| Z13 | everyday speech keeps working | pass |  |
+| Z14 | natural answers | pass |  |
+| Z15 | correction after a non-entry turn | pass |  |
+| Z16 | entry plus query | pass |  |
+| Z17 | problem-statement sentence and the demo script | pass |  |
 
 ## Manual cases
 

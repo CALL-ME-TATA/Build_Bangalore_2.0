@@ -2,7 +2,7 @@
 
 KhataVaani is a voice ledger for kirana udhaar. The shopkeeper holds one button, speaks a sentence such as
 "Ramesh ka 340 udhaar, kal 200 diya tha", and hears a short confirmation. Interfaces are fixed in docs/CONTRACT.md
-(version 1.3). The edge cases the rules were written against are in docs/EDGE_CASES.md.
+(version 1.4). The edge cases the rules were written against are in docs/EDGE_CASES.md.
 
 ## What the judges score, and where the design answers it
 
@@ -69,7 +69,7 @@ flowchart LR
 6. Speak: audio chunks stream straight to the browser, which starts playing at the first chunk. A `timing` message
    reports each hop.
 
-## Pieces added in contract 1.2 and 1.3
+## Pieces added in contract 1.2 to 1.4
 
 - **Strict-mode gate.** The parser's last step. When an append or amend would be saved and the sentence holds a word
   outside the parser's vocabulary, the result becomes a `confirm_entry` question of type `unsure`. Every other rule
@@ -82,6 +82,11 @@ flowchart LR
 - **Answers and corrections (1.3).** An answer with an undo word is a no, a denied name is never picked, two amounts in
   an answer are asked about again, and a correction is applied only right after the entry it corrects. A complete new
   sentence spoken while a question is open is parsed fresh and the question is dropped.
+- **Questions that say what will be saved (1.4).** A question is built from the entry it is about. Each new name is
+  asked about once. A sentence of several entries that needed a question about a missing or unclear field is read
+  back in full before it is saved ("2 entry likhun: ..."). Dates, times and stated balances are never taken as
+  amounts. A correction phrased as an instruction ("usko 430 kar do") and a reduction ("200 maaf kar do") are
+  confirmed before they change the ledger.
 - **Idempotency.** A turn's `utt_id` becomes the utterance id and is written in the same transaction as its events. A
   repeated `utt_id` writes nothing and returns the first result with `duplicate: true`.
 - **Write-offs.** Stored as a payment with `adjustment='writeoff'`, so the balance arithmetic is unchanged; they are

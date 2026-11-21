@@ -172,7 +172,8 @@ def test_B11_udhaar_repaid_is_a_payment(utterance):
     assert one(run(utterance)) == ("payment", "ramesh", 30, D0)
 
 
-@pytest.mark.parametrize("utterance", ["Ramesh ne Ramesh ko 100 diya", "Sunita ko ne 500 diya", "Sunita ne ko 500 diya"])
+@pytest.mark.parametrize("utterance", ["Ramesh ne Ramesh ko 100 diya", "Sunita ko ne 500 diya",
+                                       "Sunita ne ko 500 diya"])
 def test_B12_one_name_with_ne_and_ko_asks(utterance):
     assert run(utterance)["reason"] == "ambiguous_direction"
 

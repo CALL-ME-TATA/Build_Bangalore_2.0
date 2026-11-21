@@ -293,7 +293,8 @@ DIRECTION = {"pending": {"reason": "ambiguous_direction", "action": "append", "e
 
 
 @pytest.mark.parametrize("reply,kind", [("Ramesh ne diye", "payment"), ("Ramesh ji ko udhaar", "credit"),
-                                        ("Ramesh Sharma ne diye", "payment"), ("haan udhaar", None)])
+                                        ("Ramesh Sharma ne diye", "payment"),
+                                        ("haan udhaar", "credit")])  # 1.16 S3: a natural answer is accepted
 def test_direction_answers_with_name(reply, kind):
     r = run(reply, DIRECTION)
     if kind is None:

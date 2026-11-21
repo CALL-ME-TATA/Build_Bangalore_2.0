@@ -29,6 +29,8 @@ export function useDoubtSync(): void {
           said: s.transcript,
           candidates: s.result.candidates,
           confirm: s.result.confirm,
+          action: s.result.action,
+          duplicate: s.result.duplicate,
         });
       }),
     [],

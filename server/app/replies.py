@@ -166,8 +166,10 @@ class Replier:
         s = f"{self.words(n)} एंट्री लिखी: {body_s}।"
         return Reply(prefix_t + t, prefix_s + s)
 
-    def _several(self, events: list[dict], today: date | None) -> tuple[int, str, str]:
-        """(count, shown body, spoken body) of the several-entries reply: "Ramesh ke ₹340 udhaar, kal ke ₹200 jama"."""
+    def _several(self, events: list[dict], today: date | None, question: bool = False) -> tuple[int, str, str]:
+        """(count, shown body, spoken body) of the several-entries reply: "Ramesh ke ₹340 udhaar, kal ke ₹200 jama".
+
+        In a question a payment is "{name} se ₹N jama" (section 5.1, confirm `review`)."""
         parts_t, parts_s = [], []
         prev = None
         for ev in events:
@@ -177,16 +179,23 @@ class Replier:
             # The name is said once for a run of entries of the same customer (section 5: "kal ke ₹200 jama").
             same = ev["customer"] == prev
             prev = ev["customer"]
-            who_t = "" if same else f"{ev['customer']} ke "
-            who_s = "" if same else f"{_name(ev['customer'])} के "
+            pt, ps = ("se", "से") if question and ev["kind"] == "payment" else ("ke", "के")
+            who_t = "" if same else f"{ev['customer']} {pt} "
+            who_s = "" if same else f"{_name(ev['customer'])} {ps} "
             parts_t.append(f"{who_t}{dt}₹{fmt_amount(amt)} {word_t}")
             parts_s.append(f"{who_s}{ds}{self.words(amt)} रुपये {word_s}")
         return len(events), ", ".join(parts_t), ", ".join(parts_s)
 
     def confirm_entries(self, events: list[dict], today: date | None = None) -> Reply:
-        """One question about several pending entries: "2 entry likhun: Ramesh ke ₹340 udhaar, kal ke ₹200 jama?"."""
-        n, body_t, body_s = self._several(events, today)
+        """One question about several pending entries: "2 entry likhun: Ramesh ke ₹500 udhaar, Sunita se ₹200 jama?"."""
+        n, body_t, body_s = self._several(events, today, question=True)
         return Reply(f"{n} entry likhun: {body_t}?", f"{self.words(n)} एंट्री लिखूँ: {body_s}?")
+
+    def confirm_amend(self, name: str, kind: str, old: int, new: int) -> Reply:
+        """Confirm `amend` (1.16): names the entry being changed."""
+        word_t, word_s = self._kind(kind)
+        return Reply(f"{name} ki ₹{fmt_amount(old)} {word_t} entry ₹{fmt_amount(new)} kar doon?",
+                     f"{_name(name)} की {self.words(old)} रुपये {word_s} एंट्री {self.words(new)} रुपये कर दूँ?")
 
     def amend(self, ev: dict) -> Reply:
         word_t, word_s = self._kind(ev["kind"])
@@ -215,17 +224,28 @@ class Replier:
     def confusable(self, a: int, b: int) -> Reply:
         return Reply(f"₹{fmt_amount(a)} ya ₹{fmt_amount(b)}?", f"{self.words(a)} रुपये या {self.words(b)} रुपये?")
 
-    def same_name(self, name: str, tags: list[str]) -> Reply:
+    def same_name(self, name: str, tags: list[str], about: tuple[int, str] | None = None) -> Reply:
+        """`about` = (amount, kind) of the clause, named when the sentence holds more than one entry."""
         labels = [t if t else "pehle wale" for t in tags[:2]]
         while len(labels) < 2:
             labels.append("doosre wale")
-        return Reply(f"Kaunse {name}: {labels[0]} ya {labels[1]}?",
-                     f"कौन से {_name(name)}: {_name(labels[0])} या {_name(labels[1])}?")
+        at = as_ = ""
+        if about:
+            kt, ks = self._kind(about[1])
+            at, as_ = f", ₹{fmt_amount(about[0])} {kt} wale", f", {self.words(about[0])} रुपये {ks} वाले"
+        return Reply(f"Kaunse {name}{at}: {labels[0]} ya {labels[1]}?",
+                     f"कौन से {_name(name)}{as_}: {_name(labels[0])} या {_name(labels[1])}?")
 
-    def which_entry(self, a: dict, b: dict) -> Reply:
+    def which_entry(self, a: dict, b: dict, names: tuple[str, str] | None = None) -> Reply:
+        """`names`: the customers of the two entries, said when the entries alone cannot be told apart."""
         (at, as_), (bt, bs) = self._kind(a["kind"]), self._kind(b["kind"])
-        return Reply(f"Kaunsi entry: ₹{fmt_amount(a['amount'])} {at} ya ₹{fmt_amount(b['amount'])} {bt}?",
-                     f"कौनसी एंट्री: {self.words(a['amount'])} रुपये {as_} या {self.words(b['amount'])} रुपये {bs}?")
+        na_t = na_s = nb_t = nb_s = ""
+        if names:
+            na_t, nb_t = f"{names[0]} ", f"{names[1]} "
+            na_s, nb_s = f"{_name(names[0])} ", f"{_name(names[1])} "
+        return Reply(f"Kaunsi entry: {na_t}₹{fmt_amount(a['amount'])} {at} ya {nb_t}₹{fmt_amount(b['amount'])} {bt}?",
+                     f"कौनसी एंट्री: {na_s}{self.words(a['amount'])} रुपये {as_} या "
+                     f"{nb_s}{self.words(b['amount'])} रुपये {bs}?")
 
     def undo_check(self, name: str, amount: int, kind: str) -> Reply:
         word_t, word_s = self._kind(kind)
@@ -287,6 +307,14 @@ class Replier:
 
     def private(self) -> Reply:
         return Reply("Jawab screen par hai.", "जवाब स्क्रीन पर है।")
+
+    def notice(self, reason: str) -> Reply:
+        """The short notice put before a repeated question when a turn gave no usable answer (3.3)."""
+        table = {"silence": ("Kuch sunai nahi diya.", "कुछ सुनाई नहीं दिया।"),
+                 "empty_transcript": ("Samajh nahi aaya.", "समझ नहीं आया।"),
+                 "too_long": ("Bahut lamba ho gaya.", "बहुत लंबा हो गया।"),
+                 "upstream": ("Network mein dikkat hai.", "नेटवर्क में दिक्कत है।")}
+        return Reply(*table.get(reason, table["empty_transcript"]))
 
     def private_question(self) -> Reply:
         """Spoken in private mode for a question that states a balance; the question itself is on the screen."""
@@ -444,42 +472,71 @@ class Replier:
         return self.reminder_message(name, amount)
 
     # ---- clarification dispatcher -----------------------------------------------------------------------------
-    def clarification(self, result: dict, name_of: NameOf | None = None, today: date | None = None) -> Reply | None:
-        """Template for a needs_clarification result, built from its structured fields; None when the reason
-        (or the confirm type) is unknown, so the caller can fall back to the parser's question."""
+    @staticmethod
+    def target_event(result: dict, events: list[dict], lacking: str | None = None,
+                     flag: str | None = None) -> dict | None:
+        """The event a question is about: `pending.index` (1.16); without it, the first event carrying `flag`, then
+        the first event that lacks `lacking`, then the first event."""
+        pending = result.get("pending") or {}
+        idx = pending.get("index", result.get("index"))
+        if isinstance(idx, int) and not isinstance(idx, bool) and 0 <= idx < len(events):
+            return events[idx]
+        if flag:
+            hit = next((e for e in events if e.get(flag)), None)
+            if hit is not None:
+                return hit
+        if lacking:
+            hit = next((e for e in events if e.get(lacking) in (None, "")), None)
+            if hit is not None:
+                return hit
+        return events[0] if events else None
+
+    def clarification(self, result: dict, name_of: NameOf | None = None, today: date | None = None,
+                      last: dict | None = None) -> Reply | None:
+        """Template for a needs_clarification result, built from its structured fields and from the event the
+        question is about; None when the reason (or the confirm type) is unknown, so the caller can fall back to the
+        parser's question. `last` is the session's last event (for the replace wording)."""
         name_of = name_of or _key_name
         reason = result.get("reason")
         pending = result.get("pending") or {}
         events = [e for e in (pending.get("events") or result.get("events") or []) if isinstance(e, dict)]
         cands = result.get("candidates") or pending.get("candidates") or []
-        named = next((e for e in events if e.get("customer") or e.get("customer_id")), None)
         if reason == "confusable_number" and len(cands) >= 2:
             return self.confusable(int(cands[0]), int(cands[1]))
         if reason == "same_name" and cands:
             name = display_name(str(cands[0].get("name", "")))
-            return self.same_name(name, [c.get("tags", [None])[0] if c.get("tags") else "" for c in cands])
+            about = None
+            ev = self.target_event(result, events, lacking="customer_id")
+            if len(events) > 1 and ev is not None and isinstance(ev.get("amount"), int) and ev.get("kind"):
+                about = (ev["amount"], ev["kind"])
+            return self.same_name(name, [c.get("tags", [None])[0] if c.get("tags") else "" for c in cands], about)
         if reason == "plausibility":
+            ev = self.target_event(result, events)
+            if ev is not None and isinstance(ev.get("amount"), int):
+                return self.plausibility(ev["amount"])
             amounts = [e["amount"] for e in events if isinstance(e.get("amount"), int)]
             if amounts:
                 return self.plausibility(max(amounts))
         if reason == "missing_amount":
             if result.get("quantity") or pending.get("quantity"):
                 return self.quantity()
-            if (len(events) == 1 and named is not None and "kind" not in named and "amount" not in named
-                    and pending.get("action", "append") == "append"):
-                return self.name_alone(name_of(named))
+            ev = self.target_event(result, events, lacking="amount")
+            if (len(events) == 1 and ev is not None and (ev.get("customer") or ev.get("customer_id"))
+                    and "kind" not in ev and "amount" not in ev and pending.get("action", "append") == "append"):
+                return self.name_alone(name_of(ev))
             return self.missing_amount()
         if reason == "missing_customer":
             return self.missing_customer()
         if reason == "ambiguous_direction":
-            name = name_of(named) if named else ""
+            ev = self.target_event(result, events, lacking="kind")
+            name = name_of(ev) if ev is not None and (ev.get("customer") or ev.get("customer_id")) else ""
             return self.direction(name or "Customer")
         if reason == "new_customer":
-            target = next((e for e in events if e.get("new_customer")), named)
-            if target is None:
+            ev = self.target_event(result, events, flag="new_customer")
+            if ev is None or not (ev.get("customer") or ev.get("customer_id")):
                 return None
             close = [display_name(str(c.get("name") or "")) for c in cands if isinstance(c, dict) and c.get("name")]
-            return self.new_customer(name_of(target), close)
+            return self.new_customer(name_of(ev), close)
         if reason == "confirm_entry":
             return self._confirm(result, pending, events, name_of, today)
         if reason == "unclear_correction":
@@ -487,23 +544,36 @@ class Replier:
             usable = [c for c in cands if isinstance(c, dict) and c.get("kind") in kinds
                       and isinstance(c.get("amount"), int)]
             if len(usable) >= 2:
-                return self.which_entry(usable[0], usable[1])
-            ev = events[0] if events else {}
+                a, b = usable[0], usable[1]
+                names = None
+                if a["kind"] == b["kind"] and a["amount"] == b["amount"]:
+                    names = (name_of(a), name_of(b))
+                return self.which_entry(a, b, names)
+            ev = self.target_event(result, events) or {}
             if pending.get("action") == "undo" and ev.get("kind") in kinds and ev.get("amount") and ev.get("customer"):
                 return self.undo_check(name_of(ev), ev["amount"], ev["kind"])
-            if (pending.get("action") == "amend" and ev.get("kind") in kinds and ev.get("amount")
-                    and ev.get("customer")):
+            if pending.get("action") == "amend" and self._replaces_entry(ev, last):
                 return self.replace_check()
             return self.unclear_correction()
         if reason == "unclear_date":
             return self.unclear_date()
         return None
 
+    @staticmethod
+    def _replaces_entry(ev: dict, last: dict | None) -> bool:
+        """True when a pending amend holds a whole new entry: customer, amount and kind all differ from the last
+        event (1.12). Anything less is an unclear correction, never "Pichli entry hata kar yeh likhoon?"."""
+        if not last or not (ev.get("kind") and isinstance(ev.get("amount"), int) and ev.get("customer")):
+            return False
+        same_customer = (ev.get("customer_id") and ev.get("customer_id") == last.get("customer_id")) or \
+            str(ev.get("customer")).lower() == str(last.get("customer") or "").lower()
+        return not same_customer and ev["amount"] != last.get("amount") and ev["kind"] != last.get("kind")
+
     def _confirm(self, result: dict, pending: dict, events: list[dict], name_of: NameOf,
                  today: date | None) -> Reply | None:
         confirm = result.get("confirm") or pending.get("confirm") or {}
         ctype = confirm.get("type")
-        ev = events[0] if events else {}
+        ev = self.target_event(result, events) or {}
         amount = ev.get("amount") if isinstance(ev.get("amount"), int) else None
         balance = confirm.get("balance") if isinstance(confirm.get("balance"), int) else None
         name = name_of(ev) if ev else name_of({"customer": result.get("customer") or pending.get("customer"),
@@ -516,22 +586,33 @@ class Replier:
             if balance is not None and isinstance(said, int):
                 return self.reminder_confirm(name, balance, said)
             return None
+        full = [e for e in events if isinstance(e.get("amount"), int) and e.get("kind")
+                and (e.get("customer") or e.get("customer_id"))]
+        if ctype == "review" or (ctype in ("computed", "hearsay", "unsure") and len(events) > 1):
+            # Every pending entry in one question (1.16 `review`; strict mode with several entries).
+            if len(full) == len(events) and full:
+                return self.confirm_entries([dict(e, customer=name_of(e)) for e in full], today)
+            return None
         if not name:
             return None
         if ctype in ("computed", "hearsay", "unsure"):
             # `unsure` (strict mode): the unknown words in `confirm.words` are never spoken or shown.
-            full = [e for e in events if isinstance(e.get("amount"), int) and e.get("kind")
-                    and (e.get("customer") or e.get("customer_id"))]
-            if len(events) > 1 and len(full) == len(events):
-                return self.confirm_entries([dict(e, customer=name_of(e)) for e in full], today)
             if amount is not None and ev.get("kind"):
                 return self.confirm_entry(name, ev["kind"], amount, ev.get("date"), today)
+            return None
+        if ctype == "amend":
+            old, new = confirm.get("old"), confirm.get("new")
+            kind = confirm.get("kind") or ev.get("kind")
+            if isinstance(old, int) and isinstance(new, int) and kind:
+                return self.confirm_amend(name, kind, old, new)
             return None
         if ctype == "settle" and (balance is not None or amount is not None):
             return self.confirm_settle(name, balance if balance is not None else amount)
         if ctype == "half" and amount is not None:
             return self.confirm_half(name, amount)
         if ctype == "writeoff" and (balance is not None or amount is not None):
+            if amount is not None and amount != balance:
+                return self.confirm_entry(name, "writeoff", amount)  # an amount, not the whole balance
             return self.confirm_writeoff(name, balance if balance is not None else amount)
         if ctype == "roundoff" and balance is not None and amount is not None:
             return self.confirm_roundoff(name, balance, amount)
@@ -600,7 +681,7 @@ class EnglishReplier(Replier):
         n, body_t, body_s = self._several(events, today)
         return Reply(f"{pre_t}{n} entries: {body_t}.", f"{pre_s}{self.words(n)} entries: {body_s}.")
 
-    def _several(self, events: list[dict], today: date | None) -> tuple[int, str, str]:
+    def _several(self, events: list[dict], today: date | None, question: bool = False) -> tuple[int, str, str]:
         parts_t, parts_s = [], []
         prev = None
         for ev in events:
@@ -618,13 +699,19 @@ class EnglishReplier(Replier):
             suffix = f" {day}" if day else ""
             parts_t.append(t + who_t + suffix)
             parts_s.append(s + who_s + suffix)
-        body_t = ", ".join(parts_t[:-1]) + ", and " + parts_t[-1]
-        body_s = ", ".join(parts_s[:-1]) + ", and " + parts_s[-1]
+        joiner = ", " if question else ", and "  # the review question lists the entries without "and"
+        body_t = ", ".join(parts_t[:-1]) + joiner + parts_t[-1]
+        body_s = ", ".join(parts_s[:-1]) + joiner + parts_s[-1]
         return len(events), body_t, body_s
 
     def confirm_entries(self, events: list[dict], today: date | None = None) -> Reply:
-        n, body_t, body_s = self._several(events, today)
+        n, body_t, body_s = self._several(events, today, question=True)
         return Reply(f"Save {n} entries: {body_t}?", f"Save {self.words(n)} entries: {body_s}?")
+
+    def confirm_amend(self, name: str, kind: str, old: int, new: int) -> Reply:
+        k = KIND_EN.get(kind, kind)
+        return Reply(f"Change {name}'s ₹{fmt_amount(old)} {k} entry to ₹{fmt_amount(new)}?",
+                     f"Change {_name(name)}'s {self._rs(old)} {k} entry to {self._rs(new)}?")
 
     def amend(self, ev: dict) -> Reply:
         k = KIND_EN.get(ev["kind"], ev["kind"])
@@ -651,17 +738,25 @@ class EnglishReplier(Replier):
     def confusable(self, a: int, b: int) -> Reply:
         return Reply(f"₹{fmt_amount(a)} or ₹{fmt_amount(b)}?", f"{self._rs(a)} or {self._rs(b)}?")
 
-    def same_name(self, name: str, tags: list[str]) -> Reply:
+    def same_name(self, name: str, tags: list[str], about: tuple[int, str] | None = None) -> Reply:
         labels = [t if t else "the first one" for t in tags[:2]]
         while len(labels) < 2:
             labels.append("the second one")
-        return self._same(f"Which {name}: {labels[0]} or {labels[1]}?",
-                          f"Which {_name(name)}: {labels[0]} or {labels[1]}?")
+        at = as_ = ""
+        if about:
+            k = KIND_EN.get(about[1], about[1])
+            at, as_ = f", for ₹{fmt_amount(about[0])} {k}", f", for {self._rs(about[0])} {k}"
+        return Reply(f"Which {name}{at}: {labels[0]} or {labels[1]}?",
+                     f"Which {_name(name)}{as_}: {labels[0]} or {labels[1]}?")
 
-    def which_entry(self, a: dict, b: dict) -> Reply:
+    def which_entry(self, a: dict, b: dict, names: tuple[str, str] | None = None) -> Reply:
         ak, bk = KIND_EN.get(a["kind"], a["kind"]), KIND_EN.get(b["kind"], b["kind"])
-        return Reply(f"Which entry: ₹{fmt_amount(a['amount'])} {ak} or ₹{fmt_amount(b['amount'])} {bk}?",
-                     f"Which entry: {self._rs(a['amount'])} {ak} or {self._rs(b['amount'])} {bk}?")
+        na_t = nb_t = na_s = nb_s = ""
+        if names:
+            na_t, nb_t = f"{names[0]} ", f"{names[1]} "
+            na_s, nb_s = f"{_name(names[0])} ", f"{_name(names[1])} "
+        return Reply(f"Which entry: {na_t}₹{fmt_amount(a['amount'])} {ak} or {nb_t}₹{fmt_amount(b['amount'])} {bk}?",
+                     f"Which entry: {na_s}{self._rs(a['amount'])} {ak} or {nb_s}{self._rs(b['amount'])} {bk}?")
 
     def undo_check(self, name: str, amount: int, kind: str) -> Reply:
         k = KIND_EN.get(kind, kind)
@@ -725,6 +820,11 @@ class EnglishReplier(Replier):
 
     def private_question(self) -> Reply:
         return self._same("Please check the screen, then say yes or no.")
+
+    def notice(self, reason: str) -> Reply:
+        table = {"silence": "I could not hear anything.", "empty_transcript": "I did not understand.",
+                 "too_long": "That was too long.", "upstream": "Network problem."}
+        return self._same(table.get(reason, table["empty_transcript"]))
 
     def new_customer(self, name: str, close: list[str] | None = None) -> Reply:
         if close:

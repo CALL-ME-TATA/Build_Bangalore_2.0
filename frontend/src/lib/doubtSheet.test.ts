@@ -38,7 +38,7 @@ describe('sheetReduce', () => {
   });
 
   test('ignores ordinary results while closed', () => {
-    expect(sheetReduce(sheetClosed, result({ entries: [e(1)] }))).toBe(sheetClosed);
+    expect(sheetReduce(sheetClosed, result({ entries: [e(1)] }))).toMatchObject({ stage: 'closed', question: '' });
   });
 
   test('tap, then the saved entry: asking -> waiting -> saved -> dismissed', () => {
@@ -50,7 +50,7 @@ describe('sheetReduce', () => {
     s = sheetReduce(s, result({ turnId: 2, entries: [e(7)], replyText: 'Geeta ke khate mein ₹340 udhaar likh diya.' }));
     expect(s.stage).toBe('saved');
     expect(s.entries.map((x) => x.id)).toEqual([7]);
-    expect(sheetReduce(s, { type: 'dismiss' })).toEqual(sheetClosed);
+    expect(sheetReduce(s, { type: 'dismiss' })).toEqual({ ...sheetClosed, seq: s.seq });
   });
 
   test('an answer by voice (no tap) also reaches saved', () => {

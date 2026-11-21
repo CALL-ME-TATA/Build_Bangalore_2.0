@@ -39,10 +39,27 @@ export type Candidate = number | CandidateCustomer | CandidateEvent;
 
 /** The `confirm` object of a `confirm_entry` question (contract 1.14). */
 export interface Confirm {
-  type: 'computed' | 'settle' | 'half' | 'writeoff' | 'roundoff' | 'overpayment' | 'duplicate' | 'hearsay' | 'reminder' | string;
+  type:
+    | 'computed'
+    | 'settle'
+    | 'half'
+    | 'writeoff'
+    | 'roundoff'
+    | 'overpayment'
+    | 'duplicate'
+    | 'hearsay'
+    | 'reminder'
+    | 'review'
+    | 'amend'
+    | string;
   balance?: number;
   bill?: number;
   paid?: number;
+  /** `writeoff` may name the amount. */
+  amount?: number;
+  /** `amend`: the amount being replaced and the new one. */
+  old?: number;
+  new?: number;
 }
 
 /** What a query turn asked (contract 3.3), so the page can show more than was spoken. */

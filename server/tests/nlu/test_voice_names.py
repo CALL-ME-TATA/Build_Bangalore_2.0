@@ -22,7 +22,8 @@ def customer_of(r):
 
 # 1. A name said twice in slightly different spellings is one name -------------------------------------------------
 
-@pytest.mark.parametrize("utterance", ["Ramish Ramesh ne 5 diye", "Ramesh Ramish ne 5 diye", "Rameysh Ramesh ka 20 udhaar",
+@pytest.mark.parametrize("utterance", ["Ramish Ramesh ne 5 diye", "Ramesh Ramish ne 5 diye",
+                                       "Rameysh Ramesh ka 20 udhaar",
                                        "Sunitha Sunita ne 100 diye"])
 def test_repeated_name_in_two_spellings_is_the_stored_customer(utterance):
     r = run(utterance, confirm_new=True)

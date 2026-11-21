@@ -130,7 +130,8 @@ def test_B3_new_customer_negated_other_name(reply):
     assert not saved(r), r
 
 
-@pytest.mark.parametrize("reply", ["chai wale nahi", "chai wala nahi hai", "gali 3 wale nahi", "chai wale ya gali wale"])
+@pytest.mark.parametrize("reply", ["chai wale nahi", "chai wala nahi hai", "gali 3 wale nahi",
+                                   "chai wale ya gali wale"])
 def test_B3_same_name_negated_tag(reply):
     first = run("Suresh ka 200 udhaar")
     assert first["reason"] == "same_name"
@@ -256,8 +257,10 @@ def test_B6_inside_one_utterance_the_customer_still_carries():
 
 # --- B7: counts of goods are not rupees ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("utterance", ["Ramesh ko 12 ande udhaar", "Ramesh ko 50 bidi udhaar", "Ramesh 10 cigarette le gaya",
-                                       "Ramesh 12 Maggi le gaya", "Ramesh took 12 eggs on credit", "रमेश को बारह अंडे उधार",
+@pytest.mark.parametrize("utterance", ["Ramesh ko 12 ande udhaar", "Ramesh ko 50 bidi udhaar",
+                                       "Ramesh 10 cigarette le gaya",
+                                       "Ramesh 12 Maggi le gaya", "Ramesh took 12 eggs on credit",
+                                       "रमेश को बारह अंडे उधार",
                                        "Sunita ko 2 doodh udhaar", "Ramesh ko teen sabun udhaar"])
 def test_B7_count_of_goods_asks_the_price(utterance):
     r = run(utterance)
@@ -278,7 +281,8 @@ def test_B7_goods_with_a_currency_word_are_an_amount():
 
 # --- B8: saath / sath (with) ----------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("utterance", ["Ramesh saaman saath le gaya", "Ramesh sath le gaya", "Ramesh ne paise sath diye",
+@pytest.mark.parametrize("utterance", ["Ramesh saaman saath le gaya", "Ramesh sath le gaya",
+                                       "Ramesh ne paise sath diye",
                                        "रमेश सामान साथ ले गया", "Sunita saath mein 300 le gayi"])
 def test_B8_saath_meaning_with_is_not_60(utterance):
     r = run(utterance)
@@ -319,14 +323,16 @@ def test_B9_a_did_question_is_never_saved():
     assert r["status"] == "needs_clarification", r  # "pay" alone asks the direction first
 
 
-@pytest.mark.parametrize("utterance", ["Ramesh ne 500 na diye", "रमेश ने पांच सौ न दिए", "Ramesh ka 500 udhaar na likhna",
+@pytest.mark.parametrize("utterance", ["Ramesh ne 500 na diye", "रमेश ने पांच सौ न दिए",
+                                       "Ramesh ka 500 udhaar na likhna",
                                        "Sunita ne 200 na diya"])
 def test_B9_na_before_a_verb_is_a_negation(utterance):
     r = run(utterance)
     assert r["status"] == "rejected" and r["reason"] == "negated", r
 
 
-@pytest.mark.parametrize("utterance", ["Ramesh ka 500 udhaar hai", "Ramesh ka 500 udhaar tha", "Ramesh pe 500 udhaar hai",
+@pytest.mark.parametrize("utterance", ["Ramesh ka 500 udhaar hai", "Ramesh ka 500 udhaar tha",
+                                       "Ramesh pe 500 udhaar hai",
                                        "Sunita ka 300 udhaar hai"])
 def test_B9_stative_sentence_confirms(utterance):
     r = run(utterance, ctx(limits={"strict": False}))

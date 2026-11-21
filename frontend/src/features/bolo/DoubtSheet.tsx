@@ -49,11 +49,16 @@ export default function DoubtSheet() {
   const phase = useSession((x) => x.phase);
   const open = s.stage !== 'closed';
 
+  // Focus moves when a new question opens (seq), never when the same question is repeated in place.
+  const stage = s.stage;
   useEffect(() => {
-    if (s.stage === 'saved') changeRef.current?.focus();
-    else if (s.stage === 'asking') (firstRef.current ?? questionRef.current)?.focus();
-    else if (s.stage === 'correcting') questionRef.current?.focus();
-  }, [s.stage, s.turnId]);
+    if (stage === 'asking') (firstRef.current ?? questionRef.current)?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only a new question (seq) moves focus
+  }, [s.seq]);
+  useEffect(() => {
+    if (stage === 'saved') changeRef.current?.focus();
+    else if (stage === 'correcting') questionRef.current?.focus();
+  }, [stage]);
 
   // The server drops an unanswered question after 60 s; close it then too (unless an answer is on its way).
   const busy = micOpen || phase !== 'idle';
@@ -70,7 +75,9 @@ export default function DoubtSheet() {
 
   const asking = s.stage === 'asking' || s.stage === 'waiting';
   const example = spokenExample(s);
-  const inRow = s.kind !== 'choice' || s.options.length === 2;
+  // Large amounts get a full-width button each, so "₹5,00,000" fits at 320 px and at the largest text size.
+  const wide = s.options.some((o) => o.amount != null && o.amount >= 10000);
+  const inRow = !wide && (s.kind !== 'choice' || s.options.length === 2);
 
   return (
     <Sheet
@@ -90,9 +97,17 @@ export default function DoubtSheet() {
                 <CircleHelp aria-hidden="true" size={16} strokeWidth={1.9} />
                 {L[doubtHeadingKey(s.reason)]}
               </span>
-              <h2 ref={questionRef} tabIndex={-1} className="font-display text-question text-ink outline-none">
+              <h2
+                ref={questionRef}
+                tabIndex={-1}
+                aria-live="polite"
+                className={`font-display text-ink outline-none [overflow-wrap:anywhere] ${longQuestion(s) ? 'text-title-sm' : 'text-question'}`}
+              >
                 {shownQuestion(s)}
               </h2>
+              {s.confirm?.type === 'amend' && s.confirm.old != null && s.confirm.new != null ? (
+                <AmendLine old={s.confirm.old} next={s.confirm.new} lang={s.lang} />
+              ) : null}
               {s.context ? (
                 <p className="text-label font-normal text-ink-2">
                   {L.youSaid}: “{s.context}”
@@ -103,7 +118,13 @@ export default function DoubtSheet() {
             {s.options.length ? (
               <ul
                 className={`grid gap-3 ${
-                  inRow ? (s.options.length === 3 ? 'grid-cols-3' : 'grid-cols-2') : 'grid-cols-2 [&>li:last-child:nth-child(odd)]:col-span-2'
+                  inRow
+                    ? s.options.length === 3
+                      ? 'grid-cols-3'
+                      : 'grid-cols-2'
+                    : wide
+                      ? 'grid-cols-1'
+                      : 'grid-cols-2 [&>li:last-child:nth-child(odd)]:col-span-2'
                 }`}
               >
                 {s.options.map((o, i) => (
@@ -152,6 +173,34 @@ export default function DoubtSheet() {
         ) : null}
       </div>
     </Sheet>
+  );
+}
+
+/**
+ * A question long enough to need a smaller heading (a `review` question lists several entries): it wraps at the
+ * 24px title size instead of the 36px question size, so it is never clipped.
+ */
+export function longQuestion(s: Pick<SheetState, 'question' | 'confirm'>): boolean {
+  return s.confirm?.type === 'review' || s.question.length > 48;
+}
+
+/** Under an `amend` question: the old amount struck through, then the new one. */
+function AmendLine({ old, next, lang }: { old: number; next: number; lang: Lang }) {
+  const L = labels(lang);
+  return (
+    <p className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+      <span className="text-ink-2 line-through decoration-1">
+        <span className="sr-only">{L.amendOld}: </span>
+        <Amount value={old} sign="none" size="lg" lang={lang} />
+      </span>
+      <span aria-hidden="true" className="text-ink-2">
+        →
+      </span>
+      <span className="text-ink">
+        <span className="sr-only">{L.amendNew}: </span>
+        <Amount value={next} sign="none" size="lg" lang={lang} />
+      </span>
+    </p>
   );
 }
 

@@ -108,7 +108,12 @@ def test_clarification_dispatch_new_questions_both_languages():
     assert HI.clarification(undo).text.startswith("Sirf pichli entry hata sakta hoon: Ramesh")
     replace = {"reason": "unclear_correction", "pending": {"action": "amend", "events": [
         {"kind": "payment", "customer": "sunita", "amount": 100}]}}
-    assert EN.clarification(replace).text == "Replace the last entry with this one?"
+    last = {"kind": "credit", "customer": "ramesh", "amount": 340}
+    assert EN.clarification(replace, last=last).text == "Replace the last entry with this one?"
+    # Only a whole new entry (customer, amount and kind all different) gets the replace wording (1.16).
+    assert EN.clarification(replace).text == "Say the right amount, or say remove it."
+    same_amount = dict(last, amount=100)
+    assert EN.clarification(replace, last=same_amount).text == "Say the right amount, or say remove it."
     plain = {"reason": "unclear_correction", "pending": {"action": "amend", "events": []}}
     assert EN.clarification(plain).text == "Say the right amount, or say remove it."
 

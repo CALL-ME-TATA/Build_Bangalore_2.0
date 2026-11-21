@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
+import unicodedata
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
@@ -70,12 +71,16 @@ class SessionState:
     last_turn: dict | None = None  # {"action", "at", "customer"?, "customer_id"?}
     last_result: dict | None = None  # the last `result` message sent, replayed in `ready` on resume
     last_turn_id: int | None = None
+    # The open question as it was asked: {"text","speak","reason","question","candidates","confirm","utt_id"}.
+    asked: dict | None = None
 
     def set_pending(self, pending: dict | None, now: datetime) -> None:
+        self.asked = None
         self.pending = pending
         self.pending_at = now if pending else None
 
     def clear_pending(self) -> None:
+        self.asked = None
         self.pending = None
         self.pending_at = None
 
@@ -168,7 +173,8 @@ def text_fingerprint(transcript: str, session_id: str | None = None) -> str:
 
     The session is deliberately not part of it: the page's offline queue resends a typed sentence after a reload,
     in a new session, and that retry must be recognised (O02). A different sentence under the same id is refused."""
-    raw = " ".join(transcript.split()).lower()
+    kept = "".join(" " if unicodedata.category(ch)[0] in "PS" else ch for ch in transcript)
+    raw = " ".join(kept.split()).lower()
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -219,15 +225,39 @@ class Pipeline:
         self._r = self.replies.with_lang(state.lang)
 
     def _fixed_reply(self, state: SessionState, reply: Reply, action: str, reason: str) -> TurnResult:
-        """A spoken rejection outside the parser (silence, too long, empty transcript, upstream failure). It is a
-        turn: a correction after it must not change an older entry, so `last_turn` becomes `none`."""
+        """A spoken rejection outside the parser (silence, too long, empty transcript, upstream failure).
+
+        With a question open, nothing usable was heard as an answer: the question stays open (not a failed attempt,
+        its 60-second clock is not restarted) and is asked again after the short notice (3.3). Otherwise it is a
+        turn of its own: a correction after it must not change an older entry, so `last_turn` becomes `none`."""
         self._use_lang(state)
-        self._set_last_turn(state, "none", self.now())
+        now = self.now()
+        self.expire_pending(state, now)
+        if state.pending and state.asked:
+            return self._ask_again(state, self._r.notice(reason), action)
+        self._set_last_turn(state, "none", now)
         plain = reply
         reply, discloses = self._disclose(state, reply)
         return TurnResult("rejected", action, reply.text, reply.speak, uuid.uuid4().hex[:16], uuid.uuid4().hex[:12],
                           reason=reason, discloses=discloses, cacheable=self._cacheable(state, plain),
                           lang=state.lang)
+
+    def _fixed_reply_plain(self, state: SessionState, reply: Reply, action: str, reason: str) -> TurnResult:
+        """A fixed rejected reply that changes no session state."""
+        plain = reply
+        reply, discloses = self._disclose(state, reply)
+        return TurnResult("rejected", action, reply.text, reply.speak, uuid.uuid4().hex[:16], uuid.uuid4().hex[:12],
+                          reason=reason, discloses=discloses, cacheable=self._cacheable(state, plain),
+                          lang=state.lang)
+
+    def _ask_again(self, state: SessionState, notice: Reply, action: str) -> TurnResult:
+        asked = state.asked or {}
+        plain = Reply(f"{notice.text} {asked['text']}", f"{notice.speak} {asked['speak']}")
+        reply, discloses = self._disclose(state, plain)
+        return TurnResult("needs_clarification", action, reply.text, reply.speak, uuid.uuid4().hex[:16],
+                          uuid.uuid4().hex[:12], reason=asked.get("reason"), question=asked.get("question"),
+                          discloses=discloses, lang=state.lang, candidates=asked.get("candidates"),
+                          confirm=asked.get("confirm"))
 
     def greeting(self, state: SessionState, trace_id: str | None = None) -> TurnResult:
         self._use_lang(state)
@@ -327,6 +357,12 @@ class Pipeline:
         state changes. Only when this session has not been disclosed yet and the first reply did not carry the
         disclosure is the disclosure put in front (CONTRACT section 7: every session's first reply discloses)."""
         self._use_lang(state)
+        if rec.get("status") == "needs_clarification" and not (
+                state.pending and state.asked and state.asked.get("utt_id") == utterance_id):
+            # The question of this utterance is no longer the open one: never put it back on screen (3.3).
+            turn = self._fixed_reply_plain(state, self._r.cancelled(), "none", "cancelled")
+            turn.trace_id, turn.utterance_id = trace_id, utterance_id
+            return turn
         sent = Reply(rec.get("reply_text") or self._r.rejected().text, rec.get("speak_text") or "")
         if not sent.speak:
             sent = Reply(sent.text, sent.text)
@@ -441,12 +477,13 @@ class Pipeline:
                 question = reply.text
                 if state.private:
                     speak_override = r.private_question().speak
+                self._remember_question(state, reply, speak_override, reason, question, None, confirm, utterance_id)
                 self._set_last_turn(state, "question", now)
             else:
                 self._set_last_turn(state, "reminder", now, last_customer)
         elif status == "needs_clarification":
             state.set_pending(result.get("pending"), now)
-            reply = r.clarification(result, self._name_of, today)
+            reply = r.clarification(result, self._name_of, today, last=ctx.get("last_event"))
             if reply is None:
                 q = result.get("question") or r.rejected().text
                 reply = Reply(q, q)
@@ -455,8 +492,10 @@ class Pipeline:
             confirm = result.get("confirm") or (result.get("pending") or {}).get("confirm")
             if isinstance(confirm, dict):
                 confirm = {k: v for k, v in confirm.items() if k != "words"}  # unknown words are never shown
-                if state.private and confirm.get("type") in BALANCE_CONFIRMS:
+                if state.private and self._states_balance(result, confirm):
                     speak_override = r.private_question().speak  # the balance stays on the screen
+            self._remember_question(state, reply, speak_override, reason, question, candidates, confirm,
+                                    utterance_id)
             self._set_last_turn(state, "question", now)
         else:
             if status == "ok":
@@ -477,6 +516,26 @@ class Pipeline:
                           candidates=candidates, confirm=confirm)
         self._record(state, turn, transcript, plain, device_ts)
         return turn
+
+    def _states_balance(self, result: dict, confirm: dict) -> bool:
+        """True when the confirm question says the customer's balance (kept off the voice in private mode). A
+        write-off of an explicit amount (1.16) names only that amount; `amend` and `review` state no balance."""
+        ctype = confirm.get("type")
+        if ctype not in BALANCE_CONFIRMS:
+            return False
+        if ctype == "writeoff":
+            events = [e for e in ((result.get("pending") or {}).get("events") or []) if isinstance(e, dict)]
+            ev = Replier.target_event(result, events) or {}
+            return not (isinstance(ev.get("amount"), int) and ev["amount"] != confirm.get("balance"))
+        return True
+
+    @staticmethod
+    def _remember_question(state: SessionState, reply: Reply, speak_override: str | None, reason: str | None,
+                           question: str | None, candidates: list | None, confirm: dict | None,
+                           utterance_id: str) -> None:
+        state.asked = {"text": reply.text, "speak": speak_override if speak_override is not None else reply.speak,
+                       "reason": reason, "question": question, "candidates": candidates, "confirm": confirm,
+                       "utt_id": utterance_id}
 
     def _record(self, state: SessionState, turn: TurnResult, transcript: str, plain: Reply,
                 device_ts: str | None) -> None:
