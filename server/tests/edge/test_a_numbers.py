@@ -60,7 +60,8 @@ def test_A09_unnasi_is_79(rs, phrase, value):
 @pytest.mark.parametrize("phrase,value", [("pachaas", 50), ("saath", 60), ("pachhattar", 75)])
 def test_A10_tens(rs, phrase, value):
     assert parse_number(phrase) == value
-    _says_credit(rs, phrase, value)
+    # CONTRACT 1.15: a bare `saath` in the amount position is asked about; with a currency word it is 60.
+    _says_credit(rs, f"{phrase} rupaye" if phrase == "saath" else phrase, value)
 
 
 def test_A11_teen_chaar_sau_asks_340_or_400(rs):

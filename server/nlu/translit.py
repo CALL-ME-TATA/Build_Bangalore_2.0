@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from functools import lru_cache
 
 _DEVA_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
 _ZERO_WIDTH = dict.fromkeys(map(ord, "\u200b‌‍﻿"), None)
@@ -68,6 +69,7 @@ class _Unit:
         self.base = base  # last Devanagari consonant, for a following nukta
 
 
+@lru_cache(maxsize=65536)
 def romanise_word(word: str, long_vowels: bool = True) -> str:
     """Romanise one Devanagari word. Non-Devanagari characters pass through unchanged."""
     units: list[_Unit] = []
@@ -167,6 +169,7 @@ _DOUBLE = re.compile(r"(.)\1+")
 _TRAILING_H = re.compile(r"(?<=[aeiou])h$")
 
 
+@lru_cache(maxsize=65536)
 def fold(word: str) -> str:
     """Spelling-variant fold for a single lowercase Roman word (see the module docstring)."""
     w = word.replace("chh", "ch").replace("cch", "ch").replace("chch", "ch")

@@ -18,6 +18,7 @@ from typing import Awaitable, Callable
 import websockets
 
 from ..config import STT_MODEL, Settings
+from ..logsafe import describe
 
 log = logging.getLogger("khata.stt")
 # The websockets library logs upgrade headers (keyterms hold customer names) and frames at DEBUG level.
@@ -141,8 +142,8 @@ class SttClient:
         if self._on_event is not None:
             try:
                 await self._on_event(kind, text)
-            except Exception:
-                log.exception("stt event callback failed")
+            except Exception as exc:
+                log.error("stt event callback failed: %s", describe(exc))
 
     async def _read(self, ws) -> None:
         try:
@@ -190,8 +191,8 @@ class SttClient:
                     self._changed.set()
         except websockets.ConnectionClosed:
             pass
-        except Exception:
-            log.exception("stt reader failed")
+        except Exception as exc:
+            log.error("stt reader failed: %s", describe(exc))
         finally:
             if self._ws is ws:
                 self._ws = None

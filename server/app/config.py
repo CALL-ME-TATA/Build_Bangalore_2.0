@@ -42,6 +42,7 @@ class Settings:
     tts_prewarm: bool = False
     tts_prewarm_explicit: bool = False  # TTS_PREWARM was set in the environment (allows prewarm inside tests)
     web_dir: str = ""
+    allowed_origins: str = ""  # ALLOWED_ORIGINS: extra browser origins for /ws/session, comma separated
     admin_token: str = ""
     access_code: str = ""
     host: str = "127.0.0.1"
@@ -77,6 +78,7 @@ class Settings:
             tts_prewarm=_flag(get("TTS_PREWARM", "1")),
             tts_prewarm_explicit=bool(get("TTS_PREWARM")),
             web_dir=get("WEB_DIR"),
+            allowed_origins=get("ALLOWED_ORIGINS"),
             admin_token=get("ADMIN_TOKEN"),
             access_code=get("ACCESS_CODE"),
             host=get("HOST", cls.host),

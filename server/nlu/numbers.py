@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 from fractions import Fraction
+from functools import lru_cache
 
 from .lexicon import load
 from .translit import fold, is_devanagari, normalise, romanise_word
@@ -107,6 +108,7 @@ CANONICAL_ROMAN = {n: text.split()[0] for n, text in _ROMAN_1_99.items()}
 CANONICAL_DEVA = {n: text.split()[0] for n, text in DEVA_1_99.items()}
 
 
+@lru_cache(maxsize=65536)
 def classify_word(word: str) -> tuple[str, object, str] | None:
     """Classify one lowercase Roman or Devanagari word as a number item, or None.
 

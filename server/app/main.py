@@ -11,6 +11,7 @@ import os
 from contextlib import asynccontextmanager
 from dataclasses import fields
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse
@@ -22,6 +23,7 @@ from .crypto import Crypto, load_key
 from .gnani.stt import SttClient
 from .gnani.tts import TtsClient, _memory_cache as tts_memory_cache
 from .ledger import Ledger, in_quiet_hours
+from .logsafe import NoDebug, StripQuery
 from .pipeline import ParseFn, Pipeline, warm_default_parser
 from .replies import NumberToWords, Replier, fixed_replies
 from .session import AppContext, Session
@@ -72,14 +74,8 @@ def prewarm_enabled(settings: Settings) -> bool:
     return bool(settings.tts_prewarm and settings.gnani_api_key and (not in_test or settings.tts_prewarm_explicit))
 
 
-class _NoDebug(logging.Filter):
-    """Drops DEBUG records: at that level websockets logs frames and upgrade headers verbatim."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        return record.levelno > logging.DEBUG
-
-
-_NO_DEBUG = _NoDebug()
+_NO_DEBUG = NoDebug()
+_STRIP_QUERY = StripQuery()
 FRAME_LOGGERS = ("websockets", "websockets.client", "websockets.server", "websockets.protocol", "uvicorn.error")
 
 
@@ -95,6 +91,27 @@ def quiet_library_loggers() -> None:
             logger.setLevel(logging.WARNING)
         if _NO_DEBUG not in logger.filters:
             logger.addFilter(_NO_DEBUG)
+    # The page URL can carry the access code as `?code=`: access records never show a query string.
+    access = logging.getLogger("uvicorn.access")
+    if _STRIP_QUERY not in access.filters:
+        access.addFilter(_STRIP_QUERY)
+
+
+def origin_allowed(origin: str | None, host: str | None, extra: str = "") -> bool:
+    """Browser origins allowed on /ws/session: the page's own host, localhost, and ALLOWED_ORIGINS.
+
+    A client that sends no Origin header is not a browser page and is allowed (the access code still applies)."""
+    if not origin:
+        return True
+    parsed = urlsplit(origin)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    if host and parsed.netloc.lower() == host.lower():
+        return True
+    if parsed.hostname in ("localhost", "127.0.0.1", "::1"):
+        return True
+    allowed = {o.strip().rstrip("/").lower() for o in extra.split(",") if o.strip()}
+    return origin.rstrip("/").lower() in allowed
 
 
 def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None,
@@ -108,6 +125,7 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        quiet_library_loggers()  # again after the server has applied its own logging config
         if settings is None:
             # Settings read from the environment are read again at start-up, so an app object built at import
             # time serves with the environment of the moment it starts (the route handlers share `cfg`).
@@ -238,6 +256,9 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
 
     @app.websocket("/ws/session")
     async def ws_session(ws: WebSocket):
+        if not origin_allowed(ws.headers.get("origin"), ws.headers.get("host"), cfg.allowed_origins):
+            await ws.close(code=1008)  # refused before the handshake completes (HTTP 403)
+            return
         await Session(ws, ctx()).run()
 
     @app.get("/", include_in_schema=False)

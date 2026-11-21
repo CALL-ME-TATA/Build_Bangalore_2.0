@@ -288,6 +288,10 @@ class Replier:
     def private(self) -> Reply:
         return Reply("Jawab screen par hai.", "जवाब स्क्रीन पर है।")
 
+    def private_question(self) -> Reply:
+        """Spoken in private mode for a question that states a balance; the question itself is on the screen."""
+        return Reply("Screen par dekhiye. Haan ya nahi boliye.", "स्क्रीन पर देखिए। हाँ या नहीं बोलिए।")
+
     # ---- section 5.1: questions -------------------------------------------------------------------------------
     def new_customer(self, name: str, close: list[str] | None = None) -> Reply:
         if close:
@@ -719,6 +723,9 @@ class EnglishReplier(Replier):
     def private(self) -> Reply:
         return self._same("The answer is on the screen.")
 
+    def private_question(self) -> Reply:
+        return self._same("Please check the screen, then say yes or no.")
+
     def new_customer(self, name: str, close: list[str] | None = None) -> Reply:
         if close:
             return self._same(f"Is {name} a new customer, or {' or '.join(close[:2])}?",
@@ -864,4 +871,5 @@ def fixed_replies(replier: Replier) -> list[Reply]:
             r.replace_check(), r.cancelled(), r.rejected(), r.upstream_failure(), r.entry_not_found(),
             r.nothing_to_amend(), r.nothing_to_undo(), r.entry_removed(), r.future(), r.negated(),
             r.out_of_scope(), r.too_large(), r.no_question(), r.silence(), r.too_long(), r.private(),
+            r.private_question(),
             r.quantity(), r.confirm_duplicate(), r.top_dues([]), r.reminder_quiet()]

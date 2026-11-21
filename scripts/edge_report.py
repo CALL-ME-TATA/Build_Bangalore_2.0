@@ -60,18 +60,28 @@ EXTRA_SECTIONS = [("X", "Sentences nobody listed", [
     ("X03", "flag off: the same sentences save directly"), ("X04", "demo script sentences do not ask"),
     ("X05", "trailing unknown word never saves silently"), ("X06", "stored names and tags are known words"),
     ("X07", "correction with an unknown word asks"), ("X08", "queries and undo are not gated"),
-    ("X09", "new-customer question and unknown word"), ("X10", "parser names the unknown words")])]
+    ("X09", "new-customer question and unknown word"), ("X10", "parser names the unknown words")]),
+    ("Y", "Review findings", [
+    ("Y01", "yes plus an undo word is no"), ("Y02", "delete request naming the entry never appends"),
+    ("Y03", "negated and two-name answers"), ("Y04", "two amounts in an answer ask again"),
+    ("Y05", "correction after an expired or dropped question"), ("Y06", "carry-over only by explicit forms"),
+    ("Y07", "goods counts are not amounts"), ("Y08", "saath is not 60"),
+    ("Y09", "questions, negations and guesses"), ("Y10", "English negation is not a correction"),
+    ("Y11", "strict mode survives another question"), ("Y12", "direction in English and goods"),
+    ("Y13", "write-off undo and correction"), ("Y14", "amount modifiers"), ("Y15", "time words"),
+    ("Y16", "N saal/hafte/mahine pehle"), ("Y17", "no-op correction"), ("Y18", "stative sentences"),
+    ("Y19", "Kochar is a name"), ("Y20", "private mode confirm questions"), ("Y21", "reused utt_id")])]
 
 
 def parse_cases_doc() -> list[tuple[str, str, list[tuple[str, str]]]]:
     """Sections of docs/EDGE_CASES.md: (letter, title, [(id, short description)])."""
     sections: list[tuple[str, str, list[tuple[str, str]]]] = []
     for line in CASES_DOC.read_text(encoding="utf-8").splitlines():
-        m = re.match(r"^## ([A-SX])\. (.+)$", line)
+        m = re.match(r"^## ([A-SXY])\. (.+)$", line)
         if m:
             sections.append((m.group(1), m.group(2), []))
             continue
-        m = re.match(r"^\| ([A-SX]\d\d) \| (.*?) \|", line)
+        m = re.match(r"^\| ([A-SXY]\d\d) \| (.*?) \|", line)
         if m and sections:
             sections[-1][2].append((m.group(1), m.group(2).strip()))
     have = {letter for letter, _, _ in sections}
@@ -95,7 +105,7 @@ def read_results(junit: Path) -> dict[str, dict]:
     """Case id -> {"tests": n, "failed": n, "detail": first failing line}."""
     results: dict[str, dict] = defaultdict(lambda: {"tests": 0, "failed": 0, "detail": ""})
     for case in ET.parse(junit).getroot().iter("testcase"):
-        m = re.match(r"test_([A-SX]\d\d)_", case.get("name", ""))
+        m = re.match(r"test_([A-SXY]\d\d)_", case.get("name", ""))
         if not m:
             continue
         entry = results[m.group(1)]

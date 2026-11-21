@@ -156,3 +156,33 @@ def test_nothing_from_the_pending_question_leaks_into_a_fresh_save(label, uttera
         amounts = {e["amount"] for e in r.get("events") or []}
         assert amounts <= {77, 33}, (label, other, r)
         assert not (pending_amounts(pending) - {77, 33}) & amounts
+
+
+# --- 1.15: yes plus an undo word, negated or two-name answers, two amounts in an answer --------------------------
+
+@pytest.mark.parametrize("label,utterance,ctx,reason,kind", PENDINGS, ids=[p[0] for p in PENDINGS])
+@pytest.mark.parametrize("reply", ["haan hata do", "ok cancel karo", "theek hai mita do", "yes delete", "haan rehne do"])
+def test_yes_plus_undo_word_never_saves(label, utterance, ctx, reason, kind, reply):
+    pending = make_pending(utterance, ctx, reason, kind)
+    r = follow(pending, ctx, reply)
+    assert not (r["status"] == "ok" and r.get("action") in ("append", "amend")), r
+
+
+@pytest.mark.parametrize("label,utterance,ctx,reason,kind", PENDINGS, ids=[p[0] for p in PENDINGS])
+@pytest.mark.parametrize("reply", ["Ramesh nahi", "Sunita nahi hai", "chai wale nahi", "Ramesh ya Sunita",
+                                   "Ramesh aur Sunita", "Rakesh nahi"])
+def test_negated_or_two_name_answers_never_save(label, utterance, ctx, reason, kind, reply):
+    pending = make_pending(utterance, ctx, reason, kind)
+    r = follow(pending, ctx, reply)
+    assert not (r["status"] == "ok" and r.get("action") in ("append", "amend")), r
+
+
+@pytest.mark.parametrize("label,utterance,ctx,reason,kind", PENDINGS, ids=[p[0] for p in PENDINGS])
+@pytest.mark.parametrize("reply", ["300 ya 400", "teen chaar sau", "likh do sau"])
+def test_two_amounts_in_an_answer_never_save(label, utterance, ctx, reason, kind, reply):
+    pending = make_pending(utterance, ctx, reason, kind)
+    r = follow(pending, ctx, reply)
+    assert not (r["status"] == "ok" and r.get("action") in ("append", "amend")), r
+    if reason in ("missing_amount", "plausibility", "confusable_number", "confirm_entry") and r["status"] == \
+            "needs_clarification":
+        assert r["reason"] in ("confusable_number", reason, "missing_amount"), r

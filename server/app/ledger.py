@@ -464,7 +464,7 @@ class Ledger:
                 return out
             owner = self._customers()[old["customer_id"]]
             self._insert_event("reversal", old["customer_id"], old["amount_paise"], old["effective_date"],
-                               now, supersedes_id=old["id"], **kw)
+                               now, supersedes_id=old["id"], adjustment=old["adjustment"], **kw)
             out.reversed.append(self._event_info(old["id"], api_kind(old["kind"], old["adjustment"]), owner,
                                                  old["amount_paise"], old["effective_date"]))
             if action == "undo":
@@ -514,10 +514,12 @@ class Ledger:
 
     def record_utterance(self, utterance_id: str, session_id: str | None, now: datetime, *, transcript: str,
                          status: str, reply_text: str, timings: dict | None = None, result: dict | None = None,
-                         device_ts: str | None = None) -> None:
+                         device_ts: str | None = None, fingerprint: str | None = None) -> None:
         body = {"transcript": transcript, "status": status, "reply_text": reply_text, "timings": timings or {}}
         if result is not None:
             body["result"] = result
+        if fingerprint is not None:
+            body["fingerprint"] = fingerprint
         with self._lock:
             self._insert_utterance(utterance_id, session_id, now, body, device_ts)
 

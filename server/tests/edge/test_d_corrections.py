@@ -78,11 +78,20 @@ def test_D09_undo_with_nothing_to_undo(rs):
     assert t.reply_text == "Undo karne ke liye kuch nahi hai.", t.describe()
 
 
+def _undo(shop):
+    """`undo karo`; CONTRACT 1.15 may answer with the undo-check question, which `haan` confirms."""
+    t = shop.say("undo karo")
+    if t.status == "needs_clarification":
+        assert t.reason == "unclear_correction", t.describe()
+        t = shop.say("haan")
+    return t
+
+
 def test_D10_second_undo_reverses_the_previous_entry_and_nothing_twice(rs):
     rs.say("Ramesh ka 100 udhaar")
     rs.say("Ramesh ka 50 udhaar")
-    u1 = rs.say("undo karo")
-    u2 = rs.say("undo karo")
+    u1 = _undo(rs)
+    u2 = _undo(rs)
     assert [r["amount"] for r in u1.reversals] == [50], u1.describe()
     assert [r["amount"] for r in u2.reversals] == [100], u2.describe()
     assert rs.balance("ramesh") == 1000

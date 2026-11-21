@@ -139,11 +139,11 @@ def test_english_direction_answers(reply, kind):
 # 3. First person -----------------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("utterance,ctx,expect", [
-    ("Maine 200 diye", LAST, ("credit", "ramesh", 200, D0)),
+    ("Maine Ramesh ko 200 diye", LAST, ("credit", "ramesh", 200, D0)),
     ("Humne Sunita ko 300 diye", None, ("credit", "sunita", 300, D0)),
     ("Maine Ramesh se 200 liye", None, ("payment", "ramesh", 200, D0)),
     ("Mujhe Ramesh ne 300 diye", None, ("payment", "ramesh", 300, D0)),
-    ("Mujhe 150 mile", LAST, ("payment", "ramesh", 150, D0)),
+    ("Mujhe Ramesh se 150 mile", LAST, ("payment", "ramesh", 150, D0)),
     ("I gave 500 to Ramesh", None, ("credit", "ramesh", 500, D0)),
     ("मैंने रमेश को 200 दिए", None, ("credit", "ramesh", 200, D0)),
 ])

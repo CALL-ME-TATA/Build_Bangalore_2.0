@@ -154,8 +154,9 @@ def test_H03_quantity_with_customer_asks_price(utterance):
     assert one(answer(r, "80 rupaye"))[1:3] == ("ramesh", 80)
 
 
-def test_H03_quantity_and_amount_keeps_the_amount():
-    assert one(run("Ramesh ko 2 kilo chawal 120 rupaye ka udhaar"))[2] == 120
+def test_H03_quantity_and_amount_is_confirmed_since_1_15():
+    r = run("Ramesh ko 2 kilo chawal 120 rupaye ka udhaar")  # a count beside an amount (1.15 B7)
+    assert r["confirm"]["type"] == "unsure" and r["pending"]["events"][0]["amount"] == 120
 
 
 # --- B. Direction -----------------------------------------------------------------------------------------------
@@ -186,7 +187,7 @@ def test_B14_one_customer_paying_another():
 
 
 @pytest.mark.parametrize("utterance,ctx", [("Ramesh ne advance 500 diya", None), ("Ramesh ka 500 advance", None),
-                                           ("advance 500 diya", LE)])
+                                           ("Ramesh ka advance 500 diya", None)])
 def test_B15_advance_is_a_payment_and_never_a_name(utterance, ctx):
     assert one(run(utterance, ctx))[:3] == ("payment", "ramesh", 500)
 
@@ -194,6 +195,10 @@ def test_B15_advance_is_a_payment_and_never_a_name(utterance, ctx):
 def test_B15_advance_skips_the_overpayment_question():
     ctx = roster({"id": "c1", "name": "ramesh", "balance": 0})
     assert run("Ramesh ne advance 500 diya", ctx)["status"] == "ok"
+
+
+def test_B15_advance_after_an_entry_asks_the_customer_since_1_15():
+    assert run("advance 500 diya", LE)["reason"] == "missing_customer"
 
 
 def test_B15_advance_without_customer_asks():
@@ -403,7 +408,7 @@ def test_E15_large_roster_stays_fast():
 # --- F. Glued tokens ---------------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("utterance,expect", [
-    ("sunita kofivehundred diya", ("credit", "sunita", 500, D0)),
+    ("sunita kofivehundred diya", ("credit", "sunita", 500, D0)),  # cut: "sunita" is carried below
     ("sunita ko500 diya", ("credit", "sunita", 500, D0)),
     ("Ramesh nefivehundred diya", ("payment", "ramesh", 500, D0)),
     ("Ramesh ko paanchsau udhaar", ("credit", "ramesh", 500, D0)),
@@ -411,7 +416,9 @@ def test_E15_large_roster_stays_fast():
     ("Ramesh ka 500rs udhaar", ("credit", "ramesh", 500, D0)),
 ])
 def test_F01_F02_glued_tokens_are_cut(utterance, expect):
-    assert one(run(utterance)) == expect
+    # 1.15: a cut into particle and number needs a stored or carried customer in the sentence
+    carried = {"last_event": {"kind": "credit", "customer": expect[1], "amount": 1, "date": D0}}
+    assert one(run(utterance, carried)) == expect
 
 
 def test_F01_glued_name_and_particle_with_a_stored_name():
@@ -866,9 +873,13 @@ def test_A12_bare_two_amounts_with_a_carried_customer_ask_the_amount_first(utter
     r = run(utterance, ctx)
     assert r["reason"] == "confusable_number" and r["candidates"] == [340, 740]
     second = answer(r, "doosra", ctx)
-    assert second["reason"] == "ambiguous_direction"
-    assert second["pending"]["events"][0]["amount"] == 740 and second["pending"]["events"][0]["customer"] == "ramesh"
-    done = answer(second, "udhaar", ctx)
+    # 1.15: a new turn without a name or continuation word asks whose account; "wahi" picks the last customer
+    assert second["reason"] == "missing_customer" and second["pending"]["events"][0]["amount"] == 740
+    third = answer(second, "wahi", ctx)
+    assert third["reason"] == "ambiguous_direction"
+    done = answer(third, "udhaar", ctx)
+    if done.get("reason") == "confirm_entry":  # the "?" form is a question: confirmed before saving (1.15)
+        done = answer(done, "haan", ctx)
     assert one(done) == ("credit", "ramesh", 740, D0)
 
 

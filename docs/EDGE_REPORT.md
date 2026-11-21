@@ -2,7 +2,7 @@
 
 Written by `scripts/edge_report.py` from the tests in `server/tests/edge/`.
 
-213 cases: 188 pass, 0 fail, 25 manual, 0 without a test (494 tests run).
+234 cases: 209 pass, 0 fail, 25 manual, 0 without a test (645 tests run).
 
 ## A. Number parsing
 
@@ -316,6 +316,32 @@ Written by `scripts/edge_report.py` from the tests in `server/tests/edge/`.
 | X08 | queries and undo are not gated | pass |  |
 | X09 | new-customer question and unknown word | pass |  |
 | X10 | parser names the unknown words | pass |  |
+
+## Y. Review findings
+
+| ID | Case | Result | First failing assertion |
+|---|---|---|---|
+| Y01 | yes plus an undo word is no | pass |  |
+| Y02 | delete request naming the entry never appends | pass |  |
+| Y03 | negated and two-name answers | pass |  |
+| Y04 | two amounts in an answer ask again | pass |  |
+| Y05 | correction after an expired or dropped question | pass |  |
+| Y06 | carry-over only by explicit forms | pass |  |
+| Y07 | goods counts are not amounts | pass |  |
+| Y08 | saath is not 60 | pass |  |
+| Y09 | questions, negations and guesses | pass |  |
+| Y10 | English negation is not a correction | pass |  |
+| Y11 | strict mode survives another question | pass |  |
+| Y12 | direction in English and goods | pass |  |
+| Y13 | write-off undo and correction | pass |  |
+| Y14 | amount modifiers | pass |  |
+| Y15 | time words | pass |  |
+| Y16 | N saal/hafte/mahine pehle | pass |  |
+| Y17 | no-op correction | pass |  |
+| Y18 | stative sentences | pass |  |
+| Y19 | Kochar is a name | pass |  |
+| Y20 | private mode confirm questions | pass |  |
+| Y21 | reused utt_id | pass |  |
 
 ## Manual cases
 

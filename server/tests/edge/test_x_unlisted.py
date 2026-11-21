@@ -86,6 +86,8 @@ def test_X08_queries_and_undo_are_not_gated(shop):
     q = shop.say("Ramesh ka total?")
     assert q.action == "query", q.describe()
     u = shop.say("undo karo")
+    if u.status == "needs_clarification":  # CONTRACT 1.15: after a query the undo is checked first
+        u = shop.say("haan")
     assert u.status == "ok" and u.action == "undo", u.describe()
 
 

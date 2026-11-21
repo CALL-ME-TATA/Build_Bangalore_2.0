@@ -99,7 +99,10 @@ def test_amount_only_correction():
 @pytest.mark.parametrize("utterance", ["sau rupaye aaye mere paas", "mere ko 200 mile", "mereko 200 mile",
                                        "mujhko 200 mile", "hamare paas 200 aaye"])
 def test_first_person_phrases_are_payments_by_the_carried_customer(utterance):
-    assert one(run(utterance, LAST))[:2] == ("payment", "ramesh")
+    # 1.15: a new turn without a name asks whose account; the first-person words still give the direction
+    first = run(utterance, LAST)
+    assert first["reason"] == "missing_customer"
+    assert one(run("wahi", dict(LAST, pending=first["pending"])))[:2] == ("payment", "ramesh")
 
 
 @pytest.mark.parametrize("utterance", ["mera 200 udhaar", "meri 200 entry"])

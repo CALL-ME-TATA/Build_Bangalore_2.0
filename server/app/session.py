@@ -24,7 +24,8 @@ from .config import Settings
 from .gnani.stt import SttClient
 from .gnani.tts import TtsClient, TtsError
 from .ledger import Ledger
-from .pipeline import Pipeline, SessionState, TurnResult, clean_utt_id
+from .logsafe import describe
+from .pipeline import Pipeline, SessionState, TurnResult, clean_device_ts, clean_utt_id
 
 log = logging.getLogger("khata.session")
 
@@ -57,8 +58,7 @@ class AppContext:
 
 
 def _client_ts(data: dict) -> str | None:
-    value = data.get("client_ts")
-    return str(value)[:64] if isinstance(value, (str, int, float)) and not isinstance(value, bool) else None
+    return clean_device_ts(data.get("client_ts"))
 
 
 def _ms(since: float) -> float:
@@ -148,7 +148,7 @@ class Session:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            log.error("turn failed: %s", type(exc).__name__)
+            log.error("turn failed: %s", describe(exc))
             try:
                 await self._send({"type": "error", "turn_id": self.turn_id, "code": "internal",
                                   "message": "turn failed"})
@@ -397,6 +397,11 @@ class Session:
         # `run_turn` is synchronous: a `start` that arrives while it runs is handled after it, so a saved entry is
         # always reported and only its speech can be cancelled (M10).
         turn = self.app.pipeline.run_turn(self.state, text, utt_id=utt_id, device_ts=device_ts)
+        if turn.error_code:
+            await self._send({"type": "error", "turn_id": tid, "code": turn.error_code,
+                              "message": "this utt_id was already used for another sentence or session"})
+            await self._state_msg(tid, "idle")
+            return
         await self._send(turn.message(tid))
         if tid != self.turn_id:
             return
@@ -434,7 +439,7 @@ class Session:
         except TtsError as exc:
             await self._send({"type": "error", "turn_id": tid, "code": "tts_upstream", "message": str(exc)})
         except Exception as exc:
-            log.exception("speaking failed")
+            log.error("speaking failed: %s", describe(exc))
             await self._send({"type": "error", "turn_id": tid, "code": "tts_upstream", "message": type(exc).__name__})
         # audio_end is always sent for audio that was started (a cancel is reported by `_interrupt` instead).
         if self._audio_open == tid:

@@ -1,4 +1,4 @@
-# CONTRACT v1.2 (2026-11-21)
+# CONTRACT v1.3 (2026-11-21)
 
 The binding interface specification for KhataVaani. Changes go through the tech lead.
 Where this file disagrees with an older note, this file wins.
@@ -368,9 +368,8 @@ Direction
   `add`, `write` are action words. With a named customer and no other direction word → credit (`Ramesh 100 note kar lo`).
 
 Carry-over and context expiry (D06, D07, L01, L02, L03, L06). This replaces the 120-second rule of 1.6.
-- Carry-over forms: any clause with an amount and no customer name: `aur N`, a bare amount with only an action word
-  (`200 add kar do`), a bare `N diya`, `300 payment aaya`, pronouns. A clause with a particle and no name, and
-  `wapas kiya` with no name, never carry over.
+- Carry-over across turns is only for explicit continuation forms: `aur N ...`, `N aur`, a bare amount with only an
+  action word (`200 add kar do`), and pronouns (`usne 200 diye`). Section 1.15 has the full rule.
 - Customer and kind come from `last_event` only when `last_turn.action` is `append` or `amend` and
   `last_turn.age_s` ≤ `limits.carry_s`. A form with no direction word takes the kind of the last event
   (`Ramesh ne 100 diye` then `50 add kar do` = payment 50). Without `last_turn` in `ctx`, `last_event.age_s` decides.
@@ -476,6 +475,81 @@ Queries and reminders (J06, J07, J09, Q08)
   with no customer and no day word → `outstanding_total`.
 - `X ko reminder bhejo / bhej do`, `send X a reminder (for N)`, `remind X` → action `reminder`.
 
+### 1.15 Rules from the second review (v1.3; they override anything above that disagrees)
+
+The test of every rule here: an entry is saved without a question only when the words leave one reading, and a
+question that leads to a save always states the customer, the amount and the direction.
+
+Answers to a pending question
+- An answer that holds an undo or stop word (`cancel`, `hata do`, `mita do`, `delete`, `undo`, `rehne do`, `mat likho`)
+  is no, whatever else it holds (`ok cancel karo`, `haan hata do`). Only the undo-check question
+  (`... Hata doon?`) reads `hata do` as yes.
+- A negated or two-name answer never picks the name that was denied: `X nahi Y` → Y; `X nahi`, `X ya Y`, `X aur Y` → a
+  failed attempt. The same for tags (`chai wale nahi`).
+- Two amounts in an answer (`300 ya 400`, `teen chaar sau`, `likh do sau`) → `confusable_number` with both, as in a
+  fresh sentence. An answer that carries an amount different from the pending one, where no amount was asked for
+  (`chai wale ko 300` to a same-name question about 200) → a failed attempt.
+- Strict mode follows the entry through every question: when the first utterance held unknown words, the entry is
+  saved only after an `unsure` confirmation that states it, even if another question (new customer, date, customer)
+  was asked and answered first.
+
+Corrections, undo and delete requests
+- An undo word together with an amount or a full entry (`Ramesh ka 340 udhaar hata do`, `340 wali entry hata do`,
+  `cancel Ramesh ko 500 udhaar`) is never an append. It gets the undo-check question, which always names the real
+  last entry, so a yes can never remove a different one.
+- A correction or a bare `cancel` / `hata do` is applied only when `last_turn.action` is `append` or `amend`. After a
+  question (answered, dropped or expired), a query, a rejection or an undo, a correction is rejected `no_last_event`
+  and a bare `cancel` / `hata do` / `undo karo` gets the undo-check question naming the entry; an older entry is
+  never changed silently.
+- A correction that changes nothing (`nahi 340` on a 340 entry) → needs_clarification `unclear_correction`.
+- A write-off is a last event like any other: `undo karo` reverses it and `nahi, 100` amends it.
+
+Carry-over
+- Across turns, the customer of the last event is taken only by an explicit continuation form: `aur N ...`, `N aur`,
+  a bare amount with only an action word (`200 add kar do`), or a pronoun. Any other new turn with an amount and no
+  name (`500 udhaar`, `200 jama`, `kal 500 le gaya`, `300 payment aaya`, `200 diya`) → `missing_customer`; the answers
+  `wahi`, `usi ka`, `same` pick the customer of the last event.
+- Inside one utterance a later clause with no name still takes the customer of the clause before it
+  (`Ramesh ka 340 udhaar, kal 200 diya tha`).
+- A single word at the start of a clause, directly before the amount, is the customer name even when it is a kinship
+  word, an honorific or also a common word (`Chacha 200 le gaye`, `Seth 500 le gaya`, `Diya 200 le gayi`). It is
+  never dropped in favour of the carried-over customer.
+
+Numbers that are not amounts
+- A number directly before a goods noun with no currency word is a count (`12 ande`, `50 bidi`, `10 cigarette`,
+  `12 Maggi`, `12 eggs`): with a customer and a credit word → `Kitne ka?`. A count beside an amount
+  (`20 rupaye ke 3 packet`, `2 baar 100`) → `confirm_entry` `unsure`.
+- `saath` / `sath` is 60 only inside a number phrase or directly before a currency word. Elsewhere it means "with"
+  and is not a number; Devanagari `साथ` is never a number (`साठ` is 60). A bare Roman `saath` in the amount position →
+  `plausibility`.
+- Words that change an amount are never harmless: `aadha`, `double`, `zyada`, `kam`, `se zyada`, `nahi to`,
+  `lagbhag`, `around`, `about` beside an amount → `confirm_entry` `unsure`.
+
+Questions, negations and guesses
+- A sentence that ends in `kya`, in `?`, or in `right` / `na`, or starts with an English question word or auxiliary
+  (`has`, `is`, `did`, `does`), and would otherwise be an entry → `confirm_entry` `hearsay`. It is never saved directly.
+- `na` directly before a verb is a negation (`500 na diye`, `na likhna`) → rejected `negated`. English `did not`,
+  `didn't`, `not paid`, `has not`, `never` → rejected `negated`; such a sentence is never a correction.
+- `bina N diye` (without paying) → rejected `negated`. `hoga`, `shayad`, `maybe`, `probably` → `confirm_entry` `hearsay`.
+- A stative sentence (`Ramesh ka 500 udhaar hai`, `... tha`, `Ramesh pe 500 udhaar hai`) → `confirm_entry` `hearsay`.
+
+Direction
+- English: `took N from X` → payment (as `X se N liye`). The shop paying or owing the customer (`I paid X N`,
+  `paid X N`, `X was paid N`, `X got N`, `X received N`, `I owe X N`, `I borrowed N from X`, `X lent me N`) →
+  rejected `out_of_scope`. `X and Y paid N` → `missing_amount`.
+- Goods returned (`... ka maal lautaya`, `saaman wapas kiya`) and goods bought from the customer
+  (`X se N ka saaman liya`) → `ambiguous_direction`.
+
+Dates and time words
+- `subah`, `dopahar`, `shaam`, `raat` directly before `ko` are time words and are ignored
+  (`Ramesh ne raat ko 500 diye` = payment 500 today). Before another particle or at the start of a clause the
+  same word can be a name (`Sham ne 200 diye`).
+- `N hafte / mahine / saal pehle` → `unclear_date`; a date never falls back to today.
+
+Other
+- `yaad` is not a reminder word. A token is split into particle and number (`ko` + `char`) only when the sentence
+  then has a stored or carried customer; otherwise it stays whole and is a name (`Kochar ko 500 udhaar`).
+
 ## 2. Ledger (`server/app/ledger.py`), SQLite with field-level AES-256-GCM
 
 SQLCipher cannot load on the dev machine, so encryption is applied in the application with `cryptography` (AESGCM).
@@ -512,7 +586,9 @@ utterances(id TEXT PRIMARY KEY, ts TEXT NOT NULL, session_id TEXT, body BLOB NOT
   left out of payment totals and summaries, and the API reports its `kind` as `"writeoff"`.
 - Idempotency (K01, O02, O05): the client may send `utt_id` with a turn. It becomes the utterance id, and the
   utterance row is written in the same transaction as the turn's events. A turn whose `utt_id` was already processed
-  writes nothing and gets the first result again with `"duplicate": true`.
+  writes nothing and gets the first result again with `"duplicate": true`. The id is bound to the sentence, not to the
+  session (a queued sentence may be resent after a page reload): the same id with a different sentence gets an
+  `error` message with code `utt_id_reused`, and nothing is saved.
 - The utterance record also keeps `device_ts`, the client's own clock reading, when the client sends one (C09). Every
   `ts` in the ledger is the server's clock in `SHOP_TZ`. A shop day is the calendar day in `SHOP_TZ` (C05, C06).
 - `confusions(heard INTEGER, meant INTEGER, n INTEGER, last_ts TEXT, PRIMARY KEY(heard, meant))`: one count each time
@@ -673,7 +749,12 @@ Rules
 - Action `reminder` (Q08): the server checks opt-in, quiet hours and the real balance. A spoken amount that differs
   from the balance → a question (`confirm_entry` shape, `confirm.type: "reminder"`); yes queues a reminder for the real
   balance.
-- Server logs never hold a transcript, a name or an amount (P05).
+- Server logs never hold a transcript, a name or an amount (P05), nor the access code: library loggers are kept quiet
+  and the query string is removed from access-log lines.
+- `/ws/session` accepts a browser only from the page's own host, from localhost, or from an origin listed in env
+  `ALLOWED_ORIGINS`.
+- In private mode a question that states a balance is spoken as `Screen par dekhiye. Haan ya nahi boliye.`; the
+  full question stays in `reply_text`.
 - At start-up the fixed replies (greeting, questions, rejections, in both languages) are synthesised into the cache in
   the background when a key is set and the audio is missing. Env `TTS_PREWARM` (default 1) (N07).
 - `GET /api/metrics`: turns, saves, questions, rejections, corrections (amends), undos and the confusion pairs since

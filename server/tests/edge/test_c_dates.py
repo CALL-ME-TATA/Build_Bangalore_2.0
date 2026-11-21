@@ -10,7 +10,8 @@ from .kit import IST, expect_ask, expect_nothing_saved, expect_reject, expect_sa
 
 def test_C01_kal_diya_tha_is_payment_dated_yesterday(rs):
     expect_saved(rs.say("Ramesh ka 340 udhaar"), ("credit", "ramesh", 340), shop=rs)
-    expect_saved(rs.say("kal 200 diya tha"), ("payment", "ramesh", 200, 1), shop=rs)
+    expect_ask(rs.say("kal 200 diya tha"), "missing_customer")  # CONTRACT 1.15: a new turn needs a name or "wahi"
+    expect_saved(rs.say("wahi"), ("payment", "ramesh", 200, 1), shop=rs)
 
 
 def test_C01_kal_with_a_name(rs):
@@ -69,7 +70,8 @@ def test_C06_five_past_midnight_is_the_new_shop_day(make_shop):
     s.seed(("ramesh", "credit", 100, 1))
     expect_saved(s.say("Ramesh ka 340 udhaar"), ("credit", "ramesh", 340), shop=s)
     assert s.rows()[-1]["date"] == "2026-11-22"
-    expect_saved(s.say("kal 200 diya tha"), ("payment", "ramesh", 200, 1), shop=s)
+    expect_ask(s.say("kal 200 diya tha"), "missing_customer")  # CONTRACT 1.15
+    expect_saved(s.say("wahi"), ("payment", "ramesh", 200, 1), shop=s)
     assert s.rows()[-1]["date"] == "2026-11-21"
     t = s.say("Aaj kitna udhaar gaya")
     assert "340" in t.reply_text, t.describe()

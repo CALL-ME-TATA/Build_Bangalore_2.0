@@ -243,8 +243,13 @@ async def test_undo_chain_walks_back(greeted, stack):
     assert u1["result"]["action"] == "undo"
     assert [e["reversed"] for e in u1["result"]["entries"]] == [True]
     assert u1["result"]["entries"][0]["amount"] == 50
-    u2 = await c.speak("undo karo")
-    assert u2["result"]["entries"][0]["amount"] == 100
+    u2 = await c.speak("undo karo")  # CONTRACT 1.15: after an undo the next one is checked first
+    assert u2["result"]["status"] == "needs_clarification" and u2["result"]["entries"] == []
+    customers, _ = await ledger(stack)
+    assert balance_of(customers, "geeta") == [100], "nothing may change before the yes"
+    u2 = await c.speak("haan")
+    assert u2["result"]["action"] == "undo" and u2["result"]["entries"][0]["amount"] == 100
+    assert [e["reversed"] for e in u2["result"]["entries"]] == [True]
     customers, _ = await ledger(stack)
     assert balance_of(customers, "geeta") == [0]
 
@@ -488,10 +493,12 @@ async def test_english_sentence_gets_english_reply_and_hinglish_switches_back(gr
     assert log["tts_requests"][-1]["language"] == "hi-IN"
 
 
-async def test_first_person_diye_is_a_credit_for_the_carried_customer(greeted, stack):
+async def test_first_person_diye_is_a_credit_for_the_customer_named_with_wahi(greeted, stack):
     c = greeted
     await c.speak("tarun ka 100 udhaar")
-    turn = await c.speak("Maine 455 rupaye diye")
+    asked = await c.speak("Maine 455 rupaye diye")  # CONTRACT 1.15: a new turn with no name asks whose account
+    assert asked["result"]["status"] == "needs_clarification" and asked["result"]["entries"] == []
+    turn = await c.speak("wahi")
     entry = turn["result"]["entries"][0]
     assert turn["result"]["status"] == "ok"
     assert entry["kind"] == "credit" and entry["amount"] == 455 and entry["customer"]["display"].lower() == "tarun"

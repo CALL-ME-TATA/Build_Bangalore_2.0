@@ -7,17 +7,17 @@ transaction, so a reply that cannot be built rolls the entry back and the turn b
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
-import traceback
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
-from pathlib import Path
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from .config import Settings
+from .logsafe import describe
 from .ledger import PERIODS, DuplicateUtterance, Ledger, Outcome, in_quiet_hours, period_range
 from .names import display_name
 from .replies import NumberToWords, Reply, Replier, default_number_to_words, fixed_replies
@@ -32,6 +32,7 @@ CARRY_S = 60                # customer carry-over window (parser rule)
 DUPLICATE_S = 30            # repeated-entry window (parser rule)
 NUMBER_WORDS_MAX = 9_999_999
 PRIVATE_QUERIES = {"balance", "top_dues", "outstanding_total", "due_since", "daily_summary"}
+BALANCE_CONFIRMS = {"settle", "half", "writeoff", "roundoff", "overpayment", "reminder"}  # questions stating a balance
 UTT_ID_MAX = 64
 
 
@@ -99,6 +100,7 @@ class TurnResult:
     candidates: list | None = None
     confirm: dict | None = None
     duplicate: bool = False
+    error_code: str | None = None  # set instead of a result: the session answers with an `error` message
 
     def message(self, turn_id: int) -> dict[str, Any]:
         """The `result` message of CONTRACT sections 3 and 3.3."""
@@ -151,6 +153,25 @@ def _amounts(result: dict) -> list[int]:
     return out
 
 
+def clean_device_ts(value: Any) -> str | None:
+    """The client's clock reading: an ISO 8601 timestamp, returned in normalised form; anything else is None."""
+    if not isinstance(value, str) or not (10 <= len(value.strip()) <= 40):
+        return None
+    try:
+        return datetime.fromisoformat(value.strip()).isoformat()
+    except ValueError:
+        return None
+
+
+def text_fingerprint(transcript: str, session_id: str | None = None) -> str:
+    """Hash of the transcript an utterance id was first used with (kept inside the encrypted body).
+
+    The session is deliberately not part of it: the page's offline queue resends a typed sentence after a reload,
+    in a new session, and that retry must be recognised (O02). A different sentence under the same id is refused."""
+    raw = " ".join(transcript.split()).lower()
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def clean_utt_id(value: Any) -> str | None:
     """A client utterance id: a non-empty string of printable characters, at most 64 long, else None."""
     if not isinstance(value, str):
@@ -198,7 +219,10 @@ class Pipeline:
         self._r = self.replies.with_lang(state.lang)
 
     def _fixed_reply(self, state: SessionState, reply: Reply, action: str, reason: str) -> TurnResult:
+        """A spoken rejection outside the parser (silence, too long, empty transcript, upstream failure). It is a
+        turn: a correction after it must not change an older entry, so `last_turn` becomes `none`."""
         self._use_lang(state)
+        self._set_last_turn(state, "none", self.now())
         plain = reply
         reply, discloses = self._disclose(state, reply)
         return TurnResult("rejected", action, reply.text, reply.speak, uuid.uuid4().hex[:16], uuid.uuid4().hex[:12],
@@ -268,26 +292,35 @@ class Pipeline:
         trace_id = trace_id or uuid.uuid4().hex[:16]
         client_id = clean_utt_id(utt_id)
         utterance_id = client_id or uuid.uuid4().hex[:12]
+        device_ts = clean_device_ts(device_ts)
+        fingerprint = text_fingerprint(transcript, state.session_id)
         self._use_lang(state)
         try:
             if client_id:
                 prior = self.ledger.find_utterance(client_id)
-                if prior is not None and isinstance(prior.get("result"), dict):
-                    return self._replay(state, prior["result"], trace_id, utterance_id)
+                if prior is not None:
+                    return self._repeat(state, prior, fingerprint, trace_id, utterance_id)
             return self._run(state, transcript, trace_id, utterance_id, device_ts)
         except DuplicateUtterance as dup:
-            return self._replay(state, dup.record.get("result") or {}, trace_id, utterance_id)
+            return self._repeat(state, dup.record, fingerprint, trace_id, utterance_id)
         except Exception as exc:
             # Only the exception type and the code location are logged: messages can hold amounts or names.
-            frames = traceback.extract_tb(exc.__traceback__)
-            loc = f"{Path(frames[-1].filename).name}:{frames[-1].lineno}" if frames else "?"
-            log.error("turn failed: %s at %s", type(exc).__name__, loc)
+            log.error("turn failed: %s", describe(exc))
             state.clear_pending()
             self._use_lang(state)
             turn = self._fixed_reply(state, self._r.rejected(), "none", "internal")
             turn.trace_id, turn.utterance_id = trace_id, uuid.uuid4().hex[:12]
             self._record(state, turn, transcript, self._r.rejected(), device_ts)
             return turn
+
+    def _repeat(self, state: SessionState, prior: dict, fingerprint: str, trace_id: str,
+                utterance_id: str) -> TurnResult:
+        """A repeated `utt_id`. The same sentence is a retry (from any session) and gets the first result back;
+        a different sentence is a reused id: an error, and nothing is saved."""
+        if prior.get("fingerprint") == fingerprint and isinstance(prior.get("result"), dict):
+            return self._replay(state, prior["result"], trace_id, utterance_id)
+        return TurnResult("rejected", "none", "", "", trace_id, utterance_id, reason="utt_id_reused",
+                          lang=state.lang, error_code="utt_id_reused")
 
     def _replay(self, state: SessionState, rec: dict, trace_id: str, utterance_id: str) -> TurnResult:
         """The first result of a repeated `utt_id`, unchanged apart from `duplicate: true`. Nothing is saved and no
@@ -406,6 +439,8 @@ class Pipeline:
                 state.set_pending(question_pending, now)
                 confirm = question_pending["confirm"]
                 question = reply.text
+                if state.private:
+                    speak_override = r.private_question().speak
                 self._set_last_turn(state, "question", now)
             else:
                 self._set_last_turn(state, "reminder", now, last_customer)
@@ -420,6 +455,8 @@ class Pipeline:
             confirm = result.get("confirm") or (result.get("pending") or {}).get("confirm")
             if isinstance(confirm, dict):
                 confirm = {k: v for k, v in confirm.items() if k != "words"}  # unknown words are never shown
+                if state.private and confirm.get("type") in BALANCE_CONFIRMS:
+                    speak_override = r.private_question().speak  # the balance stays on the screen
             self._set_last_turn(state, "question", now)
         else:
             if status == "ok":
@@ -428,7 +465,7 @@ class Pipeline:
             if reason != "not_ledger":
                 state.clear_pending()
             reply = self._rejection(state, result, reason)
-            self._set_last_turn(state, "question" if state.pending else "none", now)
+            self._set_last_turn(state, "none", now)
             action = result.get("action") or "none"
         timings["db"] = _ms(t1)
 
@@ -446,7 +483,8 @@ class Pipeline:
         try:
             self.ledger.record_utterance(turn.utterance_id, state.session_id, self.now(), transcript=transcript,
                                          status=turn.status, reply_text=turn.reply_text, timings=turn.timings,
-                                         result=turn.record(plain), device_ts=device_ts)
+                                         result=turn.record(plain), device_ts=device_ts,
+                                         fingerprint=text_fingerprint(transcript, state.session_id))
         except Exception as exc:
             # Nothing was saved by this turn; a failed log row must not change the reply.
             log.warning("could not record utterance: %s", type(exc).__name__)
@@ -506,7 +544,7 @@ class Pipeline:
                               lang=state.lang, balances=balances)
             holder["turn"], holder["outcome"] = turn, outcome
             return {"transcript": transcript, "status": status, "reply_text": shown.text, "timings": timings,
-                    "result": turn.record(reply)}
+                    "result": turn.record(reply), "fingerprint": text_fingerprint(transcript, state.session_id)}
 
         self.ledger.apply(result, now=now, session_id=state.session_id, trace_id=trace_id,
                           utterance_id=utterance_id, finish=finish, device_ts=device_ts)
