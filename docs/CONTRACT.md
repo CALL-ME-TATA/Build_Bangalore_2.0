@@ -56,6 +56,7 @@ reason:     needs_clarification: "confusable_number"|"same_name"|"plausibility"|
 candidates: same_name: [{"id","name","tags"}] ; confusable_number: [int, int]
 question:   one short spoken question in Roman Hinglish            (needs_clarification)
 pending:    {"reason", "action", "events": [partial or full events], "candidates"?}   (needs_clarification)
+            for a question about a query: {"reason", "action": "query", "query": {...}, "candidates"}
 ```
 - `credit` means the customer owes more (udhaar). `payment` means the customer paid.
 - Never guess. If any clause of an utterance needs clarification, return `needs_clarification` for the whole utterance and
@@ -80,6 +81,8 @@ pending:    {"reason", "action", "events": [partial or full events], "candidates
 - Build the variant lookup from rules and assert at import or test time that no variant string maps to two numbers.
   Do not fold `th` to `t`, `ei` to `i`, or drop a trailing `i`: `saath` (60) / `saat` (7), `teis` (23) / `tees` (30),
   `pachaas` (50) / `pachaasi` (85) must stay distinct.
+- An entry whose amount phrase is invalid or not a whole rupee amount (`Ramesh ka saade do sau udhaar`) →
+  needs_clarification `missing_amount`. An amount of zero → rejected `invalid_number`.
 
 ### 1.4 Direction (shopkeeper's point of view)
 | Pattern | Kind |
@@ -98,6 +101,10 @@ pending:    {"reason", "action", "events": [partial or full events], "candidates
 
 Compound sentences split on `,`, `aur`, `phir`, `and` when both sides carry an amount. The customer carries forward to a
 later clause without a name. The kind never carries forward; each clause decides its own.
+A clause boundary needs no punctuation: Gnani writes `Ramesh ka teen sau chalis udhar kal do sau diya tha.` without a
+comma. A second amount with its own date word or verb starts a new clause. Two names with one amount
+(`Ramesh ka 100 udhaar aur Sunita ko udhaar`) → needs_clarification `missing_amount`; one amount is never spread over
+two customers.
 
 ### 1.5 Dates
 `aaj` = today. `kal` = yesterday and `parso` / `parson` = two days ago (a ledger records the past; a future verb is rejected).
@@ -125,6 +132,9 @@ If `last_event.age_s` is present and above 120, the customer does not carry over
 | `daily_summary`, period today | `Aaj ka hisaab batao`, `Aaj ka total` (no customer name) |
 | `top_dues` | `Sabse zyada udhaar kiska hai`, `Kis kis ka baaki hai` |
 
+The same-name rule covers queries: `Ramesh ka total` with two customers named Ramesh → needs_clarification `same_name`;
+the answer returns the query with `customer_id`.
+
 ### 1.8 Customers
 - Key: lowercase Roman. Honorifics and kinship words that are separate tokens are dropped (`ji`, `bhai`, `bhaiya`, `saab`,
   `didi`, `uncle`, `aunty`, `seth` ...). `wale / wala / wali` phrases and `gali ...` phrases become tags
@@ -137,6 +147,9 @@ If `last_event.age_s` is present and above 120, the customer does not carry over
   tag picks one, otherwise needs_clarification `same_name` with `candidates`.
 - A spoken tag for a single matching customer who has no tags is returned in `tags` (the backend stores it). A spoken tag
   that contradicts the tags of the only matching customer means a new customer with that tag.
+- Tag matching is loose: `wala / wale / wali / vale` are one word, words are compared by `phonetic_key`, and a spoken tag
+  matches a stored tag when all of its content words appear in it (`chai` matches `chai wale`).
+- A name with a particle and nothing else (`Ramesh ka`, `Ramesh ne`) → rejected `not_ledger`.
 
 ### 1.9 Answers to a pending question (`ctx.pending` present)
 | pending.reason | Answer | Result |
@@ -156,6 +169,19 @@ An utterance that is itself a complete ledger sentence or query is parsed fresh 
 - Confusable number: when an entry in `stt_alternatives` parses to the same structure with a different amount →
   needs_clarification `confusable_number`, `candidates` = [amount, other amount].
 - Not a ledger sentence → rejected `not_ledger`.
+
+### 1.11 Text as it really arrives (Gnani transcripts captured on 2026-11-21)
+`format=transliterate` returns sentence case with a full stop, sometimes commas, and spelling that changes between
+utterances:
+- `Ramesh ka teen sau chalis udhar kal do sau diya tha.`
+- `Sunita ne deedh sau rupaye diye.`
+- `Ramesh ka three forty udhaar likh do.`
+- `Nahi, chaar sau tees.`
+
+Give every keyword the same spelling tolerance as number words (`udhar / udhaar / udhari`, `deedh / dedh / derh`,
+`chalis / chaalis`, `diya / diye / diyaa`). Ignore filler words anywhere in a sentence: `haan` (when more words follow),
+`to / toh`, `achha / accha`, `arre`, `bhai / bhaiya`, `suno`, `dekho`, `zara`, `please`, `ji`, `ok`, and a leading
+`theek hai`.
 
 ## 2. Ledger (`server/app/ledger.py`), SQLite with field-level AES-256-GCM
 
@@ -211,7 +237,7 @@ Server → client
 |---|---|
 | `{"type":"ready","session_id"}` | Reply to hello |
 | `{"type":"state","turn_id","state":"listening"\|"hearing"\|"transcribing"\|"thinking"\|"speaking"\|"idle"}` | `hearing` and `transcribing` come from Gnani's `speech_start` and `processing` |
-| `{"type":"transcript","turn_id","text","segment","final"}` | One per Gnani segment; the last has `final: true` and the full joined text |
+| `{"type":"transcript","turn_id","text","segment","final"}` | `text` is always the whole turn so far (finished segments plus the current partial), so the client replaces what it shows. `final: true` only on the last one |
 | `{"type":"result","turn_id","trace_id","status","action","reason"?,"entries":[...],"reply_text","question"?}` | What was understood and saved. `action` is also `"greeting"` or `"none"` |
 | `{"type":"audio_start","turn_id","sample_rate":24000,"encoding":"pcm_s16le","channels":1}` then binary frames then `{"type":"audio_end","turn_id","cancelled"?}` | The spoken reply |
 | `{"type":"timing","turn_id","trace_id","ms":{"stt_final","parse","db","tts_first_chunk","end_to_first_audio","gnani_stt_latency"}}` | Per-hop timings |
@@ -258,8 +284,17 @@ Speech-to-text, Prisma v3.0 (required by the hackathon rules)
 - A turn's text = all `transcript` texts between `start` and the reply to `commit`, joined with a space. After `commit`,
   wait for a transcript only if an utterance is open (a `speech_start` or `processing` without its `transcript`);
   give up after 2.5 s.
-- Defaults: `format=transliterate` (whole transcript in Latin letters, numbers as words, so one parser path),
-  `language_code=hi-IN`. Both are env settings; the first live test decides the final values.
+- Defaults, confirmed live: `format=transliterate` (whole transcript in Latin letters, numbers as words, so one parser
+  path) and `language_code=hi-IN`. Do not use `format=transcribe`: live, it wrote `dedh sau` as 1,500 and `three forty`
+  as 3:40. Send one language code: the comma list `hi-IN,en-IN` was closed with code 1008.
+- Partial transcripts: the upgrade header `x-partials: true` (absent from the public docs; seen in the `connected`
+  config echo and verified live) switches the session to a second vocabulary: `partial_transcript` (`text`,
+  `stable_text`, `volatile_text`, `seq`, `utterance_id`) about every 450 ms, `speech_end`, then `final_transcript`
+  (the fields of `transcript` plus `prefetched`). The client accepts both vocabularies: `transcript` and
+  `final_transcript` are final, `partial_transcript` becomes a `transcript` message with `final: false`, and
+  `processing` or `speech_end` means `transcribing`. Env `GNANI_STT_PARTIALS` (default `1`).
+- Measured live: the final transcript arrives 210 ms after `commit` with partials on, 270 to 470 ms with them off, and
+  1,160 ms when waiting for silence. `processing` is not always sent. Four concurrent sessions were accepted.
 - `keyterms`: customer names plus ledger words (`udhaar`, `jama`, `rupaye`, `hazaar`, `dedh`, `dhai`, `saade`, `sawa`, `paune`).
 - Limits: 15 minutes per session (close code 1001), idle timeout 60 s by default (5 to 900), bad header → `error` then
   close 1008, bad key → HTTP 401. Keep one STT socket per browser session, opened on the first `start`, reused while
@@ -274,6 +309,10 @@ Text-to-speech, Timbre v3.0 (required)
 - Keep one TTS socket per browser session, opened at `hello` and re-opened in the background whenever it closes, so a
   reply never waits for a handshake. To cancel a reply, close the socket. If a chunk starts with `RIFF`, strip the WAV header.
 - Spoken text is Devanagari with amounts written as words (Gnani's guidance: pass numbers as spoken words).
+- Measured live: handshake 280 to 460 ms; on a warm socket the first chunk arrives 130 to 200 ms after the request, as
+  base64 JSON chunks of 1.4 to 4 kB with no header. After the documented `complete` the server sends a second `complete`
+  (`message` and `request_id`, no `data`), and `start.request_id` names the connection, not the request. So after
+  sending a request, discard every message until its `start`.
 - Cache reply audio by hash of (text, voice, model, sample rate) in memory and under `data/tts_cache/`.
 
 Mock Gnani (`server/mock_gnani/`, owner qa): one FastAPI app serving both WebSocket paths above with the same messages,
@@ -317,10 +356,10 @@ from `nlu.speak.number_to_words`, sent to TTS). Keep them under about 12 words. 
 | Hop | Target |
 |---|---|
 | Button release → `end` sent | under 50 ms |
-| `end` → final transcript (`commit` + Gnani `latency`) | measure; expect 300 to 600 ms |
+| `end` → final transcript (`commit` + Gnani `latency`) | 210 to 470 ms measured live |
 | Parse + guard | under 10 ms |
 | Database commit + query | under 20 ms |
-| TTS request → first audio chunk | measure; socket is already open |
+| TTS request → first audio chunk | 130 to 200 ms measured live on a warm socket |
 | First chunk → first sample played | under 100 ms |
 
 ## 7. Responsible AI rules (breaking one in the live demo zeroes that score) and their tests
@@ -338,7 +377,7 @@ from `nlu.speak.number_to_words`, sent to TTS). Keep them under about 12 words. 
 ## 8. Configuration (environment variables; `.env` is never committed or printed)
 
 `GNANI_API_KEY`, `GNANI_BASE_URL` (default `https://api.vachana.ai`), `GNANI_STT_FORMAT` (`transliterate`),
-`GNANI_STT_LANGUAGE` (`hi-IN`), `GNANI_STT_MIN_SILENCE_MS` (unset = Gnani default), `GNANI_TTS_VOICE` (`Shivani`),
+`GNANI_STT_LANGUAGE` (`hi-IN`), `GNANI_STT_PARTIALS` (`1`), `GNANI_STT_MIN_SILENCE_MS` (unset = Gnani default), `GNANI_TTS_VOICE` (`Shivani`),
 `GNANI_TTS_LANGUAGE` (`hi-IN`), `GNANI_TTS_SAMPLE_RATE` (`24000`), `LEDGER_KEY`, `LEDGER_DB` (`data/khata.db`),
 `SHOP_TZ` (`Asia/Kolkata`), `CONFIRM_ABOVE` (`50000`), `ADMIN_TOKEN`, `ACCESS_CODE`, `HOST`, `PORT` (`8000`).
 Fixed by the hackathon rules and not configurable: `prisma-v3.0`, `timbre-v3.0`.

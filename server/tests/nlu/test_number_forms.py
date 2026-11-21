@@ -54,6 +54,7 @@ OLD_ORACLE_SPELLINGS = {
 FRACTIONS = {
     "sava sau": 125,
     "derh sau": 150,
+    "deedh sau": 150,
     "dhaai sau": 250,
     "saadhe teen sau": 350,
     "sadhe teen sau": 350,
