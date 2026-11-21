@@ -511,7 +511,7 @@ class Replier:
                      "रिमाइंडर सुबह नौ से रात आठ बजे के बीच ही बनते हैं।")
 
     def reminder_message(self, name: str, amount: int) -> str:
-        """The customer-facing reminder (sent through a wa.me link): short, polite, no item details."""
+        """The customer-facing reminder (sent as an SMS): short, polite, no item details."""
         return f"Namaste {name} ji, aapke khate mein ₹{fmt_amount(amount)} baaki hain. Suvidha se bhej dijiye. Dhanyavaad."
 
     def reminder(self, name: str, amount: int) -> str:

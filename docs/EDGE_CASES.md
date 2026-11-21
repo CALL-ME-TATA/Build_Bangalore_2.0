@@ -281,7 +281,7 @@ Accuracy figures reported by the replay script: exact amount, direction, custome
 | Q07 | language preference | stored per customer | |
 | Q08 | `Send Ramesh a reminder for 850`, real balance 340 | CONFIRM with the real balance | |
 | Q09 | tone | polite; no pressure | |
-| Q10 | Kafka or WhatsApp sending not built | labelled as such | The app prepares a WhatsApp link; the shopkeeper sends it |
+| Q10 | how a reminder is sent | SMS only, after the shopkeeper asks | The server queues it and publishes an id-only Kafka event; the consumer sends the SMS through Twilio after its checks. No WhatsApp link |
 
 ## R. Screen and experience
 | ID | Case | Expected | Handling |

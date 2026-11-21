@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import quote
 
 from .crypto import Crypto
 from .edits import EditError, customer_key, phone_hint, phone_number, tag_list
@@ -156,14 +155,6 @@ class DuplicateUtterance(Exception):
     def __init__(self, record: dict):
         super().__init__("utterance already recorded")
         self.record = record
-
-
-def wa_me_link(phone: str, message: str) -> str:
-    """Prefilled wa.me link. A ten-digit number gets the 91 country code."""
-    digits = "".join(ch for ch in phone if ch.isdigit())
-    if len(digits) == 10:
-        digits = "91" + digits
-    return f"https://wa.me/{digits}?text={quote(message)}"
 
 
 class Ledger:
@@ -980,9 +971,10 @@ class Ledger:
                     continue
                 lang = c.get("lang") or "hi"
                 message = message_fn(c["display"], bal, lang)
-                link = wa_me_link(c["phone"], message) if c.get("phone") else None
+                # Reminders go out by SMS only (CONTRACT 3.8); the page learns whether a number is stored, never
+                # the number itself.
                 out.append({"id": row["id"], "customer": {"id": c["id"], "display": c["display"]},
-                            "amount": bal, "lang": lang, "message": message, "wa_link": link,
+                            "amount": bal, "lang": lang, "message": message, "has_phone": bool(c.get("phone")),
                             "status": row["status"]})
             return out
 

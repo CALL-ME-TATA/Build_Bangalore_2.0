@@ -192,7 +192,7 @@ const FAQ = [
   { id: 'faq-names', q: 'Ek naam ke do grahak hon to?', a: 'Woh poochta hai: “Aap kaunse Diwakar ki baat kar rahe hain: Diwakar, Diwakar Sharma ya koi aur?” Naye grahak ki pehchaan bhi poochta hai, jaise chai wale.' },
   { id: 'faq-data', q: 'Mera data kahan rehta hai?', a: 'Aapke apne server par, encrypted. Login sirf dukaan ke chune hue Google accounts se hota hai. Har sudhaar nayi entry ke roop mein judta hai, purani entry kabhi nahi mitti.' },
   { id: 'faq-net', q: 'Internet chala jaaye to?', a: 'Bolne ke liye internet chahiye. Bina internet ke type ki hui lines phone par encrypted rehti hain aur net aate hi save hoti hain.' },
-  { id: 'faq-remind', q: 'Grahak ko reminder kaise jaata hai?', a: 'Sirf un grahakon ko jinhone haan kaha ho. Message aap khud WhatsApp se bhejte hain, subah 9 se raat 8 ke beech. Apne aap kuch nahi jaata.' },
+  { id: 'faq-remind', q: 'Grahak ko reminder kaise jaata hai?', a: 'SMS se, aur sirf un grahakon ko jinhone haan kaha ho, jab aap “Reminder bhejein” dabayein. Ek grahak ko din mein ek hi SMS jaata hai. Apne aap kuch nahi jaata.' },
 ];
 
 export function WelcomeScreen({ login }: { login?: string }) {

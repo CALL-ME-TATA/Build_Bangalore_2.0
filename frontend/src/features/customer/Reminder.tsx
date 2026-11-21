@@ -1,14 +1,14 @@
 // The action row of the "Customer" board: "Reminder bhejein" (the screen's one primary action) next to an
-// outlined mic link to Bolo, the opt-in line under them, and the opt-in switch.
+// outlined mic link to Bolo, the opt-in line under them, and the opt-in switch. Reminders go out by SMS only.
 // - The button is disabled, with the reason written in the line under it, when the customer has not opted in or
 //   owes nothing.
-// - Pressing it queues reminders (POST /api/reminders/queue), reads the outbox (GET /api/reminders) and shows this
-//   customer's prefilled message with the wa.me link the server built. Without a stored phone number the server
-//   gives no link, so a number can be added (POST /api/customers/{id}/reminders with the phone).
+// - Pressing it queues a reminder for this customer only (POST /api/customers/{id}/remind), reads the outbox
+//   (GET /api/reminders) and shows the message; the server's SMS consumer sends it (CONTRACT 3.8). Without a stored
+//   phone number one can be added (POST /api/customers/{id}/reminders with the phone), and the SMS goes then.
 // - The switch sets the opt-in (same endpoint) and says what it means in plain words.
 import { useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { Bell, ExternalLink, Mic } from 'lucide-react';
+import { Bell, Mic } from 'lucide-react';
 import { useId, useState, type FormEvent } from 'react';
 import { Button } from '../../components/Button';
 import { Switch } from '../../components/Switch';
@@ -21,10 +21,10 @@ import type { Lang } from '../../i18n';
 import { syntheticKey } from '../khata/data';
 import { fill } from '../khata/labels';
 import { customerLabels } from './labels';
-import { normalizePhone, reminderAvailability, reminderFor, safeWaLink } from './logic';
+import { normalizePhone, reminderAvailability, reminderFor } from './logic';
 
 type Outcome =
-  | { kind: 'ready'; reminder: Reminder; sms?: boolean } // sms: the server also sends it by SMS
+  | { kind: 'ready'; reminder: Reminder; sms: boolean } // sms: the server's SMS sending is on
   | { kind: 'none' }
   | { kind: 'quiet' } // outside sending hours: the server queues nothing until 09:00
   | { kind: 'failed' }
@@ -50,9 +50,10 @@ export function ReminderPanel({ customer, lang, synthetic }: { customer: Custome
         return;
       }
       const found = synthetic ? null : reminderFor(await getReminders(), customer.id);
-      const sms = Boolean(queue?.sms && found?.wa_link);
+      const sms = Boolean(queue?.sms);
       setOutcome(found ? { kind: 'ready', reminder: found, sms } : { kind: 'none' });
-      announce(found ? (sms ? `${C.reminderReady}. ${C.reminderSms}` : C.reminderReady) : C.reminderNone);
+      announce(!found ? C.reminderNone : !found.has_phone ? C.reminderNoPhone
+        : `${C.reminderReady}. ${sms ? C.reminderSms : C.reminderSmsOff}`);
     } catch {
       setOutcome({ kind: 'failed' });
       announce(C.reminderFailed, 'assertive');
@@ -121,7 +122,7 @@ export function ReminderPanel({ customer, lang, synthetic }: { customer: Custome
           customerId={customer.id}
           saving={saving}
           onSaving={setSaving}
-          onReady={(r) => setOutcome({ kind: 'ready', reminder: r })}
+          onReady={(r, sms) => setOutcome({ kind: 'ready', reminder: r, sms })}
         />
       ) : null}
 
@@ -145,7 +146,7 @@ interface OutcomeProps {
   customerId: string;
   saving: boolean;
   onSaving: (v: boolean) => void;
-  onReady: (r: Reminder) => void;
+  onReady: (r: Reminder, sms: boolean) => void;
 }
 
 function ReminderOutcome({ outcome, lang, customerId, saving, onSaving, onReady }: OutcomeProps) {
@@ -154,7 +155,6 @@ function ReminderOutcome({ outcome, lang, customerId, saving, onSaving, onReady 
   if (outcome.kind === 'none') return <p className="text-meta text-ink">{C.reminderNone}</p>;
   if (outcome.kind === 'quiet') return <p className="text-meta text-ink">{C.reminderQuietHours}</p>;
   const r = outcome.reminder;
-  const link = safeWaLink(r.wa_link);
   return (
     <div className="mt-2 flex flex-col gap-3 border-y border-line py-4">
       <p className="flex flex-wrap items-baseline gap-x-2 text-label text-ink">
@@ -164,18 +164,8 @@ function ReminderOutcome({ outcome, lang, customerId, saving, onSaving, onReady 
       <blockquote className="max-w-prose text-body text-ink-2" lang="hi-Latn">
         {r.message}
       </blockquote>
-      {outcome.sms ? <p className="text-meta text-ink">{C.reminderSms}</p> : null}
-      {link ? (
-        <a
-          href={link}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex min-h-12 items-center justify-center gap-2 self-start rounded-control border border-line-strong bg-surface px-4 text-label text-ink hover:bg-tint"
-        >
-          <ExternalLink aria-hidden="true" size={18} strokeWidth={1.75} />
-          {C.reminderOpen}
-          <span className="sr-only">({C.reminderOpenSr})</span>
-        </a>
+      {r.has_phone ? (
+        <p className="text-meta text-ink">{outcome.sms ? C.reminderSms : C.reminderSmsOff}</p>
       ) : (
         <PhoneForm lang={lang} customerId={customerId} saving={saving} onSaving={onSaving} onReady={onReady} />
       )}
@@ -202,10 +192,16 @@ function PhoneForm({ lang, customerId, saving, onSaving, onReady }: Omit<Outcome
     onSaving(true);
     try {
       await setReminderOptIn(customerId, true, phone);
+      // The reminder is still pending: asking again now lets the SMS consumer send it to the new number.
+      const queue = await remindCustomer(customerId);
+      if (queue.quietHours) {
+        setError(C.reminderQuietHours);
+        return;
+      }
       const found = reminderFor(await getReminders(), customerId);
       if (found) {
-        onReady(found);
-        announce(C.reminderReady);
+        onReady(found, queue.sms);
+        announce(`${C.reminderReady}. ${queue.sms ? C.reminderSms : C.reminderSmsOff}`);
       }
     } catch {
       setError(C.phoneFailed);

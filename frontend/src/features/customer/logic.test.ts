@@ -1,5 +1,5 @@
 // Customer detail logic: timeline grouping and pairing of removed entries, entry times, reminder rules, phone
-// numbers, the wa.me link check, labels; and the timeline markup (struck-through removed entries stay visible).
+// numbers, labels; and the timeline markup (struck-through removed entries stay visible).
 import { describe, expect, test } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -13,7 +13,6 @@ import {
   normalizePhone,
   reminderAvailability,
   reminderFor,
-  safeWaLink,
 } from './logic';
 import { CUSTOMER_TABLES } from './labels';
 import { Timeline } from './Timeline';
@@ -104,7 +103,7 @@ describe('reminders', () => {
     expect(reminderAvailability({ reminders_opt_in: true, balance: 5 })).toEqual({ enabled: true, reason: null });
   });
   test('the newest pending reminder of this customer', () => {
-    const r = (id: number, cid: string): Reminder => ({ id, customer: { id: cid, display: cid }, amount: 340, message: 'm', wa_link: null, status: 'pending' });
+    const r = (id: number, cid: string): Reminder => ({ id, customer: { id: cid, display: cid }, amount: 340, message: 'm', has_phone: false, status: 'pending' });
     expect(reminderFor([r(1, 'a'), r(3, 'a'), r(2, 'b')], 'a')?.id).toBe(3);
     expect(reminderFor([r(2, 'b')], 'a')).toBeNull();
   });
@@ -125,16 +124,6 @@ describe('normalizePhone', () => {
     expect(normalizePhone('1234567890')).toBeNull();
     expect(normalizePhone('98765432101234')).toBeNull();
     expect(normalizePhone('')).toBeNull();
-  });
-});
-
-describe('safeWaLink', () => {
-  test('only https wa.me links', () => {
-    expect(safeWaLink('https://wa.me/919876543210?text=Namaste')).toBe('https://wa.me/919876543210?text=Namaste');
-    expect(safeWaLink('http://wa.me/91')).toBeNull();
-    expect(safeWaLink('javascript:alert(1)')).toBeNull();
-    expect(safeWaLink('https://example.com/wa.me')).toBeNull();
-    expect(safeWaLink(null)).toBeNull();
   });
 });
 

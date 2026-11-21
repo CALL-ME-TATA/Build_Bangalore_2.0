@@ -169,14 +169,3 @@ export function normalizePhone(input: string): string | null {
   if (d.length === 12 && d.startsWith('91')) d = d.slice(2);
   return /^[6-9]\d{9}$/.test(d) ? d : null;
 }
-
-/** Only https://wa.me/ links from the server are offered as a link. */
-export function safeWaLink(link: string | null | undefined): string | null {
-  if (!link) return null;
-  try {
-    const u = new URL(link);
-    return u.protocol === 'https:' && (u.hostname === 'wa.me' || u.hostname === 'api.whatsapp.com') ? u.href : null;
-  } catch {
-    return null;
-  }
-}

@@ -26,8 +26,8 @@ export interface Reminder {
   customer: { id: string; display: string };
   amount: number;
   message: string;
-  /** wa.me link, or null when no phone number is stored. */
-  wa_link: string | null;
+  /** A phone number is stored. Reminders go out by SMS only; the number itself never reaches the page. */
+  has_phone: boolean;
   status: string;
 }
 

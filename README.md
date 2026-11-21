@@ -41,8 +41,9 @@ the edge-case list is in [docs/EDGE_REPORT.md](docs/EDGE_REPORT.md).
 - Recordings: a press under half a second is ignored, silence and an over-long recording each get their own reply, and
   the page keeps 300 ms of audio from before the press and 300 ms after the release.
 - Private mode: balance answers are shown on screen and not spoken.
-- Reminders: opt-in per customer, rebuilt from the current balance, held outside 09:00 to 20:00, and sent by the
-  shopkeeper through a prefilled WhatsApp link. Nothing is sent automatically.
+- Reminders: opt-in per customer, rebuilt from the current balance, held outside 09:00 to 20:00 (unless
+  `REMINDER_ANY_HOUR=1`), and sent by SMS through Twilio only when the shopkeeper presses "Send reminder" (or asks by
+  voice and says yes): at most one a day per customer, and only to numbers in `TWILIO_ALLOWED_TO`.
 - A shop-specific table of corrected amounts (heard to meant): once the shop has corrected the same amount twice, the
   app asks about it the next time.
 - Encrypted data at rest, a purge command, an access code option, session resume after a dropped socket, and a disk
@@ -52,8 +53,8 @@ The web app in `frontend/` has these screens:
 
 - **Bolo** (talk): the hold-to-talk button (or tap to start and tap to stop), the conversation, a "Type karein" box,
   and a question sheet.
-- **Khata**: the customer list, and a customer detail page with the entries by date and the reminder opt-in switch with
-  the prefilled WhatsApp message.
+- **Khata**: the customer list, and a customer detail page with the entries by date and the SMS reminder opt-in switch
+  with the reminder message.
 - **Hisaab**: insights.
 - **Settings**: language, speaking speed, text size, theme, high contrast, mic mode (hold or toggle), private mode.
 - A self-contained demo route (`#/demo`) that plays a scripted session and never touches the real server.
@@ -347,7 +348,8 @@ recordings. Details and the manual checks are in [docs/TESTING.md](docs/TESTING.
 - The API key lives only in `.env`. Settings print it masked, and `.env` is in `.gitignore`.
 - No voice cloning: one stock Timbre voice. No pressure language in any reply.
 - Reminders exist only for customers who opted in (tested). They are rebuilt from the current balance, are not made
-  between 20:00 and 09:00, and the shopkeeper sends them from a prefilled WhatsApp link; the server sends nothing.
+  between 20:00 and 09:00 by default, and go out by SMS only after the shopkeeper asks: at most one a day per customer,
+  only to allowed numbers. Kafka carries ids only; phone numbers and names stay on the shop's machine.
 - Server logs hold no transcript, name or amount.
 
 ## Configuration

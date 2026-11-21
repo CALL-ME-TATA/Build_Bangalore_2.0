@@ -1,5 +1,5 @@
-"""Q. Reminders (docs/EDGE_CASES.md section Q, CONTRACT 2.1, 3.3 and 5.1). Reminders go only to opted-in customers,
-and the app only prepares a wa.me link: nothing is sent by the server."""
+"""Q. Reminders (docs/EDGE_CASES.md section Q, CONTRACT 2.1, 3.3, 3.8 and 5.1). Reminders go only to opted-in
+customers and only by SMS, which the Kafka consumer sends after its checks: the server itself sends nothing."""
 from __future__ import annotations
 
 import re
@@ -132,10 +132,10 @@ def test_Q09_no_reply_or_reminder_uses_pressure_language(make_shop):
     assert not found, f"pressure words in replies: {found}"
 
 
-def test_Q10_the_app_prepares_a_whatsapp_link_and_sends_nothing(live_stack):
+def test_Q10_the_server_queues_the_reminder_and_sends_nothing_itself(live_stack):
     live_stack.clock.set(ELEVEN)
     opted_in(live_stack, "ramesh", 340)
     live_stack.post("/api/reminders/queue")
     item = outbox(live_stack)["reminders"][0]
-    assert item["wa_link"].startswith("https://wa.me/91"), item
-    assert item["status"] == "pending", "only the shopkeeper marks a reminder sent"
+    assert item["has_phone"] is True and "wa_link" not in item, item  # SMS only, no WhatsApp link
+    assert item["status"] == "pending", "only the SMS consumer marks a reminder sent"

@@ -107,9 +107,10 @@ flowchart LR
   or more go to the parser as `confusables`, which makes it ask next time ("₹340 ya ₹740?").
 - **Private mode.** The page sends `private` in `hello` (or a `settings` message). Balance, top dues, outstanding total,
   since-when and summary answers are then shown, not spoken: the voice says "Jawab screen par hai."
-- **Reminders.** Opt-in is per customer and logged. The message is rebuilt from the current balance when read, nothing is
-  returned outside 09:00 to 20:00 shop time, and the page shows a prefilled WhatsApp link for the shopkeeper to send.
-  There is no automatic sending and no message queue service.
+- **Reminders.** Opt-in is per customer and logged. The message is rebuilt from the current balance, nothing is queued
+  outside 09:00 to 20:00 shop time (unless `REMINDER_ANY_HOUR=1`), and a reminder goes out by SMS only after the
+  shopkeeper presses "Send reminder": the server publishes an id-only event to Kafka and the consumer sends the SMS
+  through Twilio after its checks (opted in, owing, a phone number, one a day, allowed numbers only; CONTRACT 3.8).
 - **Metrics.** `GET /api/metrics` returns counts of turns, saves, questions, rejections, corrections and undos, and the
   confusion pairs; it holds no names.
 - **Static files.** The server serves `frontend/dist` when it has been built, `web/` otherwise, and `WEB_DIR` overrides.
@@ -136,7 +137,7 @@ their own turn ids, so a retry cannot save twice. Speech itself needs a connecti
 | Strict mode as the last gate | A sentence with an unknown word is asked about instead of saved; the rules above it keep their own, more specific questions |
 | Field-level AES-256-GCM instead of SQLCipher | The SQLCipher wheel is blocked by Application Control on the dev machine. Names, tags, phones, transcripts and replies are encrypted; ids, amounts and dates stay plain so totals are SQL |
 | Build step for the main web app | The app has several screens, an offline cache and a typed queue; the output is plain static files. `web/` stays as a no-build fallback |
-| Reminders through a prefilled WhatsApp link | The shopkeeper sends it, so nothing is sent without a person and only opted-in customers get one |
+| Reminders by SMS after the shopkeeper's press | Nothing is sent without a person asking, only opted-in customers get one, at most one a day, and only allowed numbers |
 | Gnani returns no confidence or alternatives | The guard relies on spoken readback, `nahi`, and confirmations of unusual amounts |
 | A bare "200 diya" after a named clause in the same sentence is a payment by that customer | This is exactly the example in the problem statement; the readback names the customer so a wrong reading is caught. As a new turn it is asked "Kiska khata?" |
 | Unknown names are asked about | Judges will use names the ledger has never seen. With `CONFIRM_NEW_CUSTOMER=0` the account is opened and the readback says "Naya khata" |

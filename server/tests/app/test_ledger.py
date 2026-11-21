@@ -152,7 +152,8 @@ def test_reminders_only_for_opted_in_customers(ledger):
     assert len(queued) == 1
     box = ledger.outbox(noon, lambda n, a, lang: f"Namaste {n}, {a}")
     assert box[0]["customer"]["display"] == "Ramesh" and box[0]["message"] == "Namaste Ramesh, 340"
-    assert box[0]["wa_link"].startswith("https://wa.me/919876543210?text=")
+    assert box[0]["has_phone"] is True and "wa_link" not in box[0]  # SMS only; the number never reaches the page
+    assert "9876543210" not in str(box)
     assert ledger.queue_reminders(noon) == []
 
 

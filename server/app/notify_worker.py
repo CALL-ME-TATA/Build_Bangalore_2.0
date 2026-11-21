@@ -7,7 +7,7 @@ machine (the same files and ledger key as the server) and sends nothing unless e
   before, not removed by an opt-out),
   the customer still opted in, still owing, with a phone number, and no reminder sent to them in the last 24 hours;
 - the number is in TWILIO_ALLOWED_TO.
-The message is rebuilt from the current balance in the customer's language (the same text as the WhatsApp link).
+The message is rebuilt from the current balance in the customer's language (the reminder text of CONTRACT 5.1).
 After Twilio accepts it the row is marked sent, so a repeated event sends nothing. Phone numbers, names and message
 text never go into Kafka or the log.
 """

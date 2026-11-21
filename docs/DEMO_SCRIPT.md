@@ -103,8 +103,8 @@ Optional extras, after the summary (they change the ledger, so they come last):
 - **Privacy.** "Names and transcripts are encrypted. The ledger is append-only. After judging we purge everything with
   one command." Private mode (Settings) shows balance answers on screen and says "Jawab screen par hai." instead of
   speaking them.
-- **Reminders.** "Only customers who opted in. The message is rebuilt from the current balance, is not made outside
-  09:00 to 20:00, and the shopkeeper sends it from a prefilled WhatsApp link. Nothing is sent automatically."
+- **Reminders.** "Only customers who opted in. The message is rebuilt from the current balance and goes out by SMS
+  only when the shopkeeper presses Send reminder, at most once a day per customer. Nothing is sent on its own."
 
 ## If something goes wrong
 

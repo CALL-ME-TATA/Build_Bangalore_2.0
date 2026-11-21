@@ -333,7 +333,8 @@ def create_app(settings: Settings | None = None, *, parse: ParseFn | None = None
 
     @app.get("/api/reminders", dependencies=guarded)
     async def reminders(request: Request):
-        """Pending reminders, rebuilt from the current balance, with their wa.me links (opted-in customers only)."""
+        """Pending reminders, rebuilt from the current balance (opted-in customers only). Reminders go out by SMS;
+        `has_phone` says whether a number is stored."""
         c = ctx(request)
         now = c.pipeline.now()
         if in_quiet_hours(now):

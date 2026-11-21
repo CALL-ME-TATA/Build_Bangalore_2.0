@@ -2,8 +2,8 @@
 
 After a ledger write commits, the server publishes one small JSON event: `entry_append`, `entry_amend`,
 `entry_undo` or `reminder_queued`. Events carry ids, kinds and amounts but no names or transcripts (names are
-encrypted at rest and stay out of the broker). A worker (`python -m app.notify_worker`) consumes them; that is
-where a WhatsApp or SMS sender plugs in. Nothing is sent to a customer automatically.
+encrypted at rest and stay out of the broker). A worker (`python -m app.notify_worker`) consumes them and sends
+reminder SMS through Twilio (CONTRACT 3.8); a customer gets one only after the shopkeeper asks for it.
 
 Publishing never slows or breaks a turn: events go on an in-memory queue and a background thread hands them to
 Kafka. When the broker is down, events are dropped with a warning (the ledger and its reminder outbox stay the

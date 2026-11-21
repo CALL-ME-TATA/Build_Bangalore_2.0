@@ -11,7 +11,7 @@ and Gnani's own docs (docs.gnani.ai, read 2026-11-21).
 |---|---|
 | P0 | Exact amounts in any spoken form; credit vs payment direction; relative dates; spoken correction and undo; same-name question; spoken answers; push-to-talk streaming through Gnani Prisma v3.0 and Timbre v3.0 over WebSocket; AI disclosure in the first turn; barge-in; encrypted data at rest; per-turn latency readout; README |
 | P1 | Clarification answers for every question type; new-customer and tag learning; payment_total and top_dues queries; TTS cache; session resume; access code; data purge command; latency harness |
-| P2 (only if P0 and P1 are green) | Hands-free mode (server VAD); dual-decode number check; reminders (opt-in, wa.me link); offline app shell; Kannada lexicon; Playwright e2e |
+| P2 (only if P0 and P1 are green) | Hands-free mode (server VAD); dual-decode number check; reminders (opt-in, SMS; 3.8); offline app shell; Kannada lexicon; Playwright e2e |
 | Cut | Kafka, SQLCipher (blocked on the dev machine), LLM fallback, on-device ledger and sync |
 
 ## 1. Parser (`server/nlu/`, pure Python, no I/O, no network, no database)
@@ -1180,6 +1180,8 @@ Kafka consumer). On when `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` and `TWILIO_M
 - Phone numbers, names, message text and the auth token never go into Kafka or the log.
 - `REMINDER_ANY_HOUR=1` lifts the 09:00 to 20:00 window (Q06) for queueing, listing and sending, in the server
   and in the consumer. Default off. Opt-in, the allow-list and one SMS per customer per 24 hours still apply.
+- SMS is the only channel (v1.11): there is no WhatsApp link. `GET /api/reminders` items carry `"has_phone"`
+  (a number is stored) instead of `wa_link`, so the page never receives a customer's full number.
 
 ## 4. Gnani API Platform (`server/app/gnani/`), verified against docs.gnani.ai
 
